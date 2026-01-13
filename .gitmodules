@@ -1,0 +1,3 @@
+[submodule "reference/thymer-sdk"]
+	path = reference/thymer-sdk
+	url = https://github.com/thymerapp/thymer-plugin-sdk

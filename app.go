@@ -14,8 +14,11 @@ import (
 	"thymer-bar/internal/sync"
 	"thymer-bar/internal/sync/github"
 	"thymer-bar/internal/thymer"
+	"thymer-bar/internal/tray"
 	"thymer-bar/internal/tunnel"
 	"thymer-bar/internal/webhook"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App struct holds the application state and services.
@@ -30,6 +33,7 @@ type App struct {
 	mcp     *mcp.Server
 	webhook *webhook.Server
 	tunnel  *tunnel.Tunnel
+	tray    *tray.Tray
 
 	// HTTP server (serves MCP + webhooks)
 	httpServer *http.Server
@@ -45,6 +49,8 @@ type App struct {
 // Config holds application configuration.
 type Config struct {
 	HTTPPort       int               `json:"http_port"`       // Port for HTTP server (MCP + webhooks)
+	TunnelName     string            `json:"tunnel_name"`     // Named Cloudflare Tunnel (pre-configured)
+	TunnelDomain   string            `json:"tunnel_domain"`   // Custom domain (e.g., "hub.lifelog.my")
 	EnableTunnel   bool              `json:"enable_tunnel"`   // Enable Cloudflare Tunnel
 	WebhookSecrets map[string]string `json:"webhook_secrets"` // source -> secret
 	GitHub         struct {
@@ -56,7 +62,7 @@ type Config struct {
 // DefaultConfig returns default configuration.
 func DefaultConfig() *Config {
 	return &Config{
-		HTTPPort:       9850,
+		HTTPPort:       8496, // "thym" in T9
 		EnableTunnel:   false,
 		WebhookSecrets: make(map[string]string),
 	}
@@ -90,8 +96,30 @@ func (a *App) startup(ctx context.Context) {
 	a.initThymer()
 	a.initSyncEngines()
 	a.initHTTPServer()
+	a.initTray()
 
 	fmt.Println("thymer-bar started")
+}
+
+func (a *App) initTray() {
+	a.tray = tray.New(tray.Config{
+		OnShow: func() {
+			runtime.WindowShow(a.ctx)
+		},
+		OnQuit: func() {
+			runtime.Quit(a.ctx)
+		},
+		OnSync: func() {
+			// TODO: Trigger sync all
+			fmt.Println("Sync all triggered from tray")
+		},
+	})
+
+	// Start tray in background (doesn't block)
+	a.tray.RunAsync()
+
+	// Update status
+	a.tray.UpdateStatus("Running")
 }
 
 // shutdown is called when the app is closing.
@@ -191,6 +219,7 @@ func (a *App) initHTTPServer() {
 	a.webhook.Register(github.NewWebhookHandler(onRecord))
 
 	// Mount handlers
+	mux.HandleFunc("/ws", a.thymer.Handler(a.log))
 	mux.HandleFunc("/mcp", a.mcp.HandleRequest)
 	mux.Handle("/webhooks/", a.webhook.Handler())
 	mux.HandleFunc("/status", a.handleStatus)
@@ -216,7 +245,9 @@ func (a *App) initHTTPServer() {
 
 func (a *App) initTunnel() {
 	a.tunnel = tunnel.New(tunnel.Config{
-		LocalPort: a.config.HTTPPort,
+		LocalPort:  a.config.HTTPPort,
+		TunnelName: a.config.TunnelName,
+		Domain:     a.config.TunnelDomain,
 	}, a.log)
 
 	go func() {

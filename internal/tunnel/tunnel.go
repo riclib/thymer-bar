@@ -14,30 +14,36 @@ import (
 
 // Tunnel manages a Cloudflare Tunnel connection.
 type Tunnel struct {
-	localPort int
-	publicURL string
-	cmd       *exec.Cmd
-	log       *slog.Logger
-	mu        sync.RWMutex
-	running   bool
+	localPort  int
+	tunnelName string // Named tunnel (uses `cloudflared tunnel run`)
+	domain     string // Custom domain (e.g., "hub.lifelog.my")
+	publicURL  string
+	cmd        *exec.Cmd
+	log        *slog.Logger
+	mu         sync.RWMutex
+	running    bool
 }
 
 // Config holds tunnel configuration.
 type Config struct {
-	LocalPort int    // Local port to tunnel
-	Token     string // Optional: Cloudflare tunnel token for named tunnels
+	LocalPort  int    // Local port to tunnel
+	TunnelName string // Named tunnel (pre-configured in Cloudflare dashboard)
+	Domain     string // Custom domain for named tunnel (e.g., "hub.lifelog.my")
 }
 
 // New creates a new tunnel manager.
 func New(cfg Config, log *slog.Logger) *Tunnel {
 	return &Tunnel{
-		localPort: cfg.LocalPort,
-		log:       log,
+		localPort:  cfg.LocalPort,
+		tunnelName: cfg.TunnelName,
+		domain:     cfg.Domain,
+		log:        log,
 	}
 }
 
 // Start starts the Cloudflare Tunnel.
-// Uses `cloudflared tunnel --url` for quick tunnels (no account needed).
+// If TunnelName is set, uses named tunnel (`cloudflared tunnel run`).
+// Otherwise, uses quick tunnel (`cloudflared tunnel --url`) - no account needed.
 func (t *Tunnel) Start(ctx context.Context) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -51,8 +57,19 @@ func (t *Tunnel) Start(ctx context.Context) error {
 		return fmt.Errorf("cloudflared not found in PATH: %w", err)
 	}
 
-	// Start cloudflared with quick tunnel
-	t.cmd = exec.CommandContext(ctx, "cloudflared", "tunnel", "--url", fmt.Sprintf("http://localhost:%d", t.localPort))
+	// Named tunnel or quick tunnel?
+	if t.tunnelName != "" {
+		// Named tunnel: `cloudflared tunnel run <name>`
+		// Requires pre-configuration in Cloudflare dashboard
+		t.cmd = exec.CommandContext(ctx, "cloudflared", "tunnel", "run", t.tunnelName)
+		// Set public URL immediately since we know the domain
+		if t.domain != "" {
+			t.publicURL = "https://" + t.domain
+		}
+	} else {
+		// Quick tunnel: random trycloudflare.com URL
+		t.cmd = exec.CommandContext(ctx, "cloudflared", "tunnel", "--url", fmt.Sprintf("http://localhost:%d", t.localPort))
+	}
 
 	// Capture output to find the public URL
 	stdout, err := t.cmd.StdoutPipe()

@@ -1,0 +1,14 @@
+{
+    "ver": 1,
+    "name": "Desktop Bridge",
+    "icon": "ti-plug-connected",
+    "description": "Connects Thymer to thymer-bar for MCP and sync integration",
+    "managed": {
+        "fields": true,
+        "views": true,
+        "sidebar": true
+    },
+    "custom": {
+        "ws_port": 8496
+    }
+}

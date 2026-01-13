@@ -105,19 +105,37 @@ func (c *Client) readLoop(conn *connection) {
 			return
 		}
 
+		conn.lastSeen = time.Now()
+
+		// Try to parse as a response first (has ID field)
 		var resp Response
-		if err := json.Unmarshal(data, &resp); err != nil {
+		if err := json.Unmarshal(data, &resp); err == nil && resp.ID != 0 {
+			conn.mu.Lock()
+			if ch, ok := conn.pending[resp.ID]; ok {
+				ch <- &resp
+				delete(conn.pending, resp.ID)
+			}
+			conn.mu.Unlock()
 			continue
 		}
 
-		conn.mu.Lock()
-		if ch, ok := conn.pending[resp.ID]; ok {
-			ch <- &resp
-			delete(conn.pending, resp.ID)
+		// Otherwise, it's an incoming message from the client
+		var msg Message
+		if err := json.Unmarshal(data, &msg); err != nil {
+			continue
 		}
-		conn.mu.Unlock()
 
-		conn.lastSeen = time.Now()
+		// Handle incoming message
+		response, err := c.HandleIncoming(conn.id, msg.Type, data)
+		if err != nil {
+			fmt.Printf("[Thymer] Error handling message: %v\n", err)
+			continue
+		}
+
+		// Send response if any
+		if response != nil {
+			conn.ws.WriteMessage(1, response) // 1 = TextMessage
+		}
 	}
 }
 

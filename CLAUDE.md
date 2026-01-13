@@ -155,15 +155,28 @@ Exposed via Cloudflare Tunnel for Claude Desktop access:
 ## Development
 
 ```bash
+# First time setup (submodules + deps)
+make setup
+
 # Run in dev mode
-wails dev
+make dev
 
 # Build for production
-wails build
+make build
 
 # Run tests
-go test ./...
+make test
+
+# See all targets
+make help
 ```
+
+## Reference Submodules
+
+The `reference/` directory contains git submodules with SDK documentation:
+- `reference/thymer-sdk/` - Thymer Plugin SDK types and interfaces
+
+These are read-only reference materials. Use `make submodules` to initialize them.
 
 ## Dependencies
 
