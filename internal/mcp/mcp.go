@@ -72,7 +72,7 @@ func (s *Server) RegisterTool(tool *Tool) {
 	s.tools[tool.Name] = tool
 }
 
-// Start starts the MCP server.
+// Start starts the MCP server as a standalone server.
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleRequest)
@@ -83,6 +83,11 @@ func (s *Server) Start() error {
 	}
 
 	return s.server.ListenAndServe()
+}
+
+// HandleRequest handles MCP requests (for mounting in external mux).
+func (s *Server) HandleRequest(w http.ResponseWriter, r *http.Request) {
+	s.handleRequest(w, r)
 }
 
 // Stop stops the MCP server.
