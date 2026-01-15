@@ -17,7 +17,7 @@ const SyncHubMarkdown = {
 
   /**
    * Replace all contents of a record with new markdown.
-   * Deletes all existing line items and inserts fresh content.
+   * Deletes existing items and inserts fresh content.
    */
   async replace(markdown, record) {
     if (!record) {
@@ -28,31 +28,30 @@ const SyncHubMarkdown = {
     // Get all existing line items
     const existingItems = await record.getLineItems();
 
-    // Delete all items - children first, then parents (leaf-to-root order)
-    // Sort by depth (items with no children in existingItems go first)
-    const itemsWithChildren = new Set();
+    // Build set of items that have children (so we delete children first)
+    const hasChildren = new Set();
     for (const item of existingItems) {
       if (item.parent_guid && item.parent_guid !== record.guid) {
-        itemsWithChildren.add(item.parent_guid);
+        hasChildren.add(item.parent_guid);
       }
     }
 
-    // Delete leaf items first
+    // Delete leaf items first (items without children)
     for (const item of existingItems) {
-      if (!itemsWithChildren.has(item.guid)) {
-        try { await item.delete(); } catch (e) {}
+      if (!hasChildren.has(item.guid)) {
+        try { await item.delete(); } catch (e) { console.warn('[SyncHub] delete failed:', e); }
       }
     }
 
-    // Then delete remaining (parents)
+    // Then delete parent items
     for (const item of existingItems) {
-      if (itemsWithChildren.has(item.guid)) {
-        try { await item.delete(); } catch (e) {}
+      if (hasChildren.has(item.guid)) {
+        try { await item.delete(); } catch (e) { console.warn('[SyncHub] delete failed:', e); }
       }
     }
 
-    // Insert fresh content
-    const count = await this.insert(markdown, record, null);
+    // Insert fresh content using explicit object reference
+    const count = await SyncHubMarkdown.insert(markdown, record, null);
     console.log('[SyncHub] Replaced content:', count, 'lines');
     return count;
   },
