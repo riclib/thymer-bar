@@ -1,4 +1,4 @@
-.PHONY: all setup build dev clean test lint submodules check install test-ws
+.PHONY: all setup build dev clean test lint submodules check install test-ws plugins
 
 # Default target
 all: setup build
@@ -46,11 +46,19 @@ lint:
 	golangci-lint run
 
 # ============================================================================
+# Plugins
+# ============================================================================
+
+# Build modular plugins (concatenate src/*.js -> plugin.js)
+plugins:
+	./scripts/build-plugins.sh
+
+# ============================================================================
 # Build
 # ============================================================================
 
 # Build the Wails app (production)
-build: check
+build: check plugins
 	wails build
 
 # Build for current platform with debug info
@@ -116,9 +124,10 @@ help:
 	@echo "  make test-ws        - Run quick WebSocket test server (no Wails)"
 	@echo "  make test           - Run Go tests"
 	@echo "  make lint           - Run golangci-lint"
+	@echo "  make plugins        - Build modular plugins (src/ -> plugin.js)"
 	@echo ""
 	@echo "Build:"
-	@echo "  make build          - Build production binary"
+	@echo "  make build          - Build production binary (includes plugins)"
 	@echo "  make build-debug    - Build with debug info"
 	@echo "  make install        - Build and install to ~/.local/bin"
 	@echo ""

@@ -1,0 +1,185 @@
+{
+  "ver": 1,
+  "name": "Calendar",
+  "icon": "ti-calendar-event",
+  "home": false,
+  "item_name": "Event",
+  "description": "Events and meetings from all your calendars",
+  "show_sidebar_items": true,
+  "show_cmdpal_items": true,
+  "page_field_ids": [
+    "source",
+    "start_time",
+    "end_time",
+    "location",
+    "attendees"
+  ],
+  "fields": [
+    {
+      "id": "source",
+      "label": "Source",
+      "icon": "ti-cloud",
+      "type": "choice",
+      "read_only": false,
+      "active": true,
+      "choices": [
+        {
+          "id": "google",
+          "label": "Google",
+          "color": "9",
+          "active": true
+        },
+        {
+          "id": "outlook",
+          "label": "Outlook",
+          "color": "6",
+          "active": true
+        },
+        {
+          "id": "ical",
+          "label": "iCal",
+          "color": "3",
+          "active": true
+        },
+        {
+          "id": "manual",
+          "label": "Manual",
+          "color": "1",
+          "active": true
+        }
+      ]
+    },
+    {
+      "id": "calendar_name",
+      "label": "Calendar",
+      "icon": "ti-calendar",
+      "type": "text",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "start_time",
+      "label": "Start",
+      "icon": "ti-clock",
+      "type": "datetime",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "end_time",
+      "label": "End",
+      "icon": "ti-clock-off",
+      "type": "datetime",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "all_day",
+      "label": "All Day",
+      "icon": "ti-sun",
+      "type": "checkbox",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "location",
+      "label": "Location",
+      "icon": "ti-map-pin",
+      "type": "text",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "meeting_url",
+      "label": "Meeting URL",
+      "icon": "ti-video",
+      "type": "url",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "attendees",
+      "label": "Attendees",
+      "icon": "ti-users",
+      "type": "text",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "recurring",
+      "label": "Recurring",
+      "icon": "ti-repeat",
+      "type": "checkbox",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "external_id",
+      "label": "External ID",
+      "icon": "ti-id",
+      "type": "text",
+      "read_only": true,
+      "active": true
+    },
+    {
+      "id": "tags",
+      "label": "Tags",
+      "icon": "ti-tags",
+      "type": "tags",
+      "read_only": false,
+      "active": true
+    }
+  ],
+  "views": [
+    {
+      "id": "VCAL001",
+      "label": "Upcoming",
+      "description": "Future events by date",
+      "icon": "ti-calendar-time",
+      "type": "table",
+      "shown": true,
+      "read_only": false,
+      "field_ids": ["start_time", "end_time", "location", "source"],
+      "sort_field_id": "start_time",
+      "sort_dir": "asc",
+      "group_by_field_id": null,
+      "opts": {}
+    },
+    {
+      "id": "VCAL002",
+      "label": "By Calendar",
+      "description": "Events grouped by calendar",
+      "icon": "ti-layout-board",
+      "type": "board",
+      "shown": true,
+      "read_only": false,
+      "field_ids": ["start_time", "location"],
+      "sort_field_id": "start_time",
+      "sort_dir": "asc",
+      "group_by_field_id": "source",
+      "opts": {}
+    },
+    {
+      "id": "VCAL003",
+      "label": "Past",
+      "description": "Past events",
+      "icon": "ti-history",
+      "type": "table",
+      "shown": true,
+      "read_only": false,
+      "field_ids": ["start_time", "end_time", "location", "attendees"],
+      "sort_field_id": "start_time",
+      "sort_dir": "desc",
+      "group_by_field_id": null,
+      "opts": {}
+    }
+  ],
+  "sidebar_record_sort_dir": "asc",
+  "sidebar_record_sort_field_id": "start_time",
+  "managed": {
+    "fields": true,
+    "views": true,
+    "sidebar": true
+  },
+  "custom": {}
+}

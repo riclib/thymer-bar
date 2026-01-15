@@ -26,16 +26,17 @@ type Engine interface {
 
 // Record represents a generic record from any sync source.
 type Record struct {
-	ID         string         `json:"id"`
-	Source     string         `json:"source"`
-	ExternalID string         `json:"external_id"`
-	Type       string         `json:"type"`       // issue, pr, highlight, event, etc.
-	Title      string         `json:"title"`
-	Content    string         `json:"content"`
-	URL        string         `json:"url,omitempty"`
-	Fields     map[string]any `json:"fields"`     // Source-specific fields
-	CreatedAt  time.Time      `json:"created_at"`
-	UpdatedAt  time.Time      `json:"updated_at"`
+	ID          string         `json:"id"`
+	Source      string         `json:"source"`
+	ExternalID  string         `json:"external_id"`
+	Type        string         `json:"type"`                  // issue, pr, highlight, event, etc.
+	Title       string         `json:"title"`
+	Content     string         `json:"content"`
+	URL         string         `json:"url,omitempty"`
+	Fields      map[string]any `json:"fields"`                // Source-specific fields
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	CompletedAt *time.Time     `json:"completed_at,omitempty"` // When closed/merged/done
 }
 
 // Event represents a sync event published to NATS.

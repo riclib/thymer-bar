@@ -63,7 +63,7 @@ func (t *Tray) onReady() {
 	systray.AddSeparator()
 
 	// Actions
-	mShow := systray.AddMenuItem("Show Window", "Open the main window")
+	mShow := systray.AddMenuItem("Manage Plugins", "Open the plugin manager")
 	mSync := systray.AddMenuItem("Sync All", "Trigger sync for all sources")
 
 	systray.AddSeparator()

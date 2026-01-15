@@ -8,15 +8,19 @@ import (
 	"os"
 	"path/filepath"
 
+	"thymer-bar/internal/config"
 	"thymer-bar/internal/mcp"
 	internalnats "thymer-bar/internal/nats"
+	"thymer-bar/internal/secrets"
 	"thymer-bar/internal/sqlite"
 	"thymer-bar/internal/sync"
 	"thymer-bar/internal/sync/github"
 	"thymer-bar/internal/thymer"
 	"thymer-bar/internal/tray"
 	"thymer-bar/internal/tunnel"
+	"thymer-bar/internal/ui"
 	"thymer-bar/internal/webhook"
+	"thymer-bar/plugins"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -44,6 +48,9 @@ type App struct {
 	// Configuration
 	dataDir string
 	config  *Config
+
+	// Cached plugin infos for info panel lookups
+	cachedPluginInfos []ui.PluginInfo
 }
 
 // Config holds application configuration.
@@ -80,6 +87,9 @@ func NewApp() *App {
 // startup is called when the app starts.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+
+	// Initialize dev mode - check if plugins/app exists relative to executable
+	a.initDevMode()
 
 	// Determine data directory
 	a.dataDir = getDataDir()
@@ -177,6 +187,15 @@ func (a *App) initSQLite() {
 
 func (a *App) initThymer() {
 	a.thymer = thymer.New()
+
+	// Emit events to frontend when connection status changes
+	a.thymer.OnConnectionChange = func(count int) {
+		runtime.EventsEmit(a.ctx, "thymer:connection", map[string]any{
+			"connected": count > 0,
+			"count":     count,
+		})
+	}
+
 	fmt.Println("Thymer client initialized (waiting for connections)")
 }
 
@@ -188,13 +207,31 @@ func (a *App) initSyncEngines() {
 		return nil
 	}
 
+	// Load config from disk
+	cfg, _ := config.Load()
+
 	// Register GitHub polling engine
 	githubEngine := github.New(onRecord)
+	token, _ := secrets.Get(secrets.GitHubToken)
+	githubEngine.Configure(map[string]any{
+		"token":   token,
+		"repos":   toAnySlice(cfg.GitHub.Repos),
+		"enabled": cfg.GitHub.Enabled,
+	})
 	a.syncRegistry.Register(githubEngine)
 
 	// TODO: Register other engines (readwise, calendar)
 
 	fmt.Printf("Registered %d sync engines\n", len(a.syncRegistry.All()))
+}
+
+// toAnySlice converts []string to []any for Configure()
+func toAnySlice(ss []string) []any {
+	result := make([]any, len(ss))
+	for i, s := range ss {
+		result[i] = s
+	}
+	return result
 }
 
 func (a *App) initHTTPServer() {
@@ -394,6 +431,11 @@ func (a *App) GetWebhookURLs() map[string]string {
 	}
 }
 
+// HideWindow hides the plugin manager window (back to tray).
+func (a *App) HideWindow() {
+	runtime.WindowHide(a.ctx)
+}
+
 // getDataDir returns the platform-appropriate data directory.
 func getDataDir() string {
 	// Check XDG_DATA_HOME first
@@ -408,4 +450,98 @@ func getDataDir() string {
 	}
 
 	return filepath.Join(home, ".local", "share", "thymer-bar")
+}
+
+// initDevMode checks if we're running in dev mode and sets up the plugins package accordingly.
+// Dev mode is detected by checking if THYMER_DEV_PLUGINS env var is set, or if plugins/app
+// exists relative to the executable.
+func (a *App) initDevMode() {
+	// Check env var first
+	if devDir := os.Getenv("THYMER_DEV_PLUGINS"); devDir != "" {
+		plugins.DevMode = true
+		plugins.DevPluginsDir = devDir
+		devMode = true
+		fmt.Printf("Dev mode enabled via THYMER_DEV_PLUGINS: %s\n", devDir)
+		return
+	}
+
+	// Check relative to executable
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+
+	// Try relative to executable directory (for wails dev)
+	exeDir := filepath.Dir(exe)
+	candidates := []string{
+		filepath.Join(exeDir, "..", "..", "plugins"),       // build/bin/thymer-bar -> plugins
+		filepath.Join(exeDir, "plugins"),                   // same dir
+		filepath.Join(filepath.Dir(exeDir), "plugins"),     // parent dir
+	}
+
+	for _, dir := range candidates {
+		if info, err := os.Stat(filepath.Join(dir, "app")); err == nil && info.IsDir() {
+			absDir, _ := filepath.Abs(dir)
+			plugins.DevMode = true
+			plugins.DevPluginsDir = absDir
+			devMode = true
+			fmt.Printf("Dev mode enabled: %s\n", absDir)
+			return
+		}
+	}
+}
+
+// =============================================================================
+// Configuration API (exposed to frontend)
+// =============================================================================
+
+// SetGitHubToken stores the GitHub token securely in the system keychain.
+func (a *App) SetGitHubToken(token string) error {
+	return secrets.Set(secrets.GitHubToken, token)
+}
+
+// GetGitHubToken retrieves the GitHub token from the system keychain.
+// Returns empty string if not set.
+func (a *App) GetGitHubToken() string {
+	token, _ := secrets.Get(secrets.GitHubToken)
+	return token
+}
+
+// HasGitHubToken checks if a GitHub token is configured.
+func (a *App) HasGitHubToken() bool {
+	token, _ := secrets.Get(secrets.GitHubToken)
+	return token != ""
+}
+
+// GetGitHubConfig returns the GitHub configuration (repos, enabled status).
+func (a *App) GetGitHubConfig() map[string]any {
+	cfg, _ := config.Load()
+	return map[string]any{
+		"enabled":  cfg.GitHub.Enabled,
+		"repos":    cfg.GitHub.Repos,
+		"hasToken": a.HasGitHubToken(),
+	}
+}
+
+// SetGitHubConfig updates the GitHub configuration.
+func (a *App) SetGitHubConfig(enabled bool, repos []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	cfg.GitHub.Enabled = enabled
+	cfg.GitHub.Repos = repos
+	return cfg.Save()
+}
+
+// GetConfigPaths returns all configuration paths for debugging.
+func (a *App) GetConfigPaths() map[string]string {
+	return map[string]string{
+		"config":    config.ConfigDir(),
+		"data":      config.DataDir(),
+		"state":     config.StateDir(),
+		"cache":     config.CacheDir(),
+		"database":  config.DatabaseFile(),
+		"jetstream": config.JetStreamDir(),
+	}
 }

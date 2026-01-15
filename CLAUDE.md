@@ -171,7 +171,17 @@ make test
 make help
 ```
 
-## Reference Submodules
+## Thymer Plugin SDK Reference
+
+**CANONICAL API REFERENCE**: `/home/riclib/src/thymer-bar/reference/thymer-sdk/types.d.ts`
+
+When writing or modifying Thymer plugins (SyncHub, Issues, etc.), always consult this file for:
+- `CollectionPlugin` and `AppPlugin` base classes
+- `DataAPI` methods (`getAllCollections`, `getAllGlobalPlugins`, `createCollection`, etc.)
+- `Collection` methods (`createRecord`, `getAllRecords`, `savePlugin`, etc.)
+- `Record` methods (`prop`, `text`, `getName`, `getLineItems`, etc.)
+- `UI` methods (`addStatusBarItem`, `addCommandPaletteCommand`, `addToaster`, etc.)
+- Line item types, segment formats, property accessors
 
 The `reference/` directory contains git submodules with SDK documentation:
 - `reference/thymer-sdk/` - Thymer Plugin SDK types and interfaces

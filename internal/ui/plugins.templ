@@ -1,0 +1,255 @@
+package ui
+
+import "github.com/riclib/icon"
+
+// InstalledInfo holds info about a plugin installed in Thymer
+type InstalledInfo struct {
+	GUID string
+	Ver  int
+}
+
+// PluginInfo represents a plugin's status
+type PluginInfo struct {
+	ID            string
+	Name          string
+	Description   string
+	Type          string // "collection" or "app"
+	Installed     bool
+	InstalledVer  int
+	AvailableVer  int
+	AutoUpdate    bool
+	Status        string // "current", "outdated", "available", "installing", "thymer-only"
+	GUID          string // GUID in Thymer (if installed)
+	HasLocalFiles bool   // Whether we have local plugin files
+}
+
+// PluginManager renders the full plugin manager page
+templ PluginManager(plugins []PluginInfo, connected bool, devMode bool) {
+	<div class={ "plugin-manager", templ.KV("dev-mode", devMode) }>
+		<div class="pm-columns">
+			<!-- Collections Column -->
+			<div class="pm-column">
+				<div class="pm-column-header">Collections</div>
+				<div class="pm-card-grid">
+					for _, p := range plugins {
+						if p.Type == "collection" {
+							@PluginCard(p)
+						}
+					}
+				</div>
+			</div>
+			<!-- App Plugins Column -->
+			<div class="pm-column">
+				<div class="pm-column-header">App Plugins</div>
+				<div class="pm-card-grid">
+					for _, p := range plugins {
+						if p.Type == "app" {
+							@PluginCard(p)
+						}
+					}
+				</div>
+			</div>
+			<!-- Info Panel -->
+			<div class="pm-info-panel" id="info-panel">
+				@InfoPanelDefault(connected, devMode)
+			</div>
+		</div>
+	</div>
+}
+
+// InfoPanelDefault shows when no plugin is selected
+templ InfoPanelDefault(connected bool, devMode bool) {
+	<div class="pm-info-header">
+		@icon.Blocks()
+		<span>thymer-bar</span>
+	</div>
+	<div class="pm-info-status">
+		if connected {
+			<span class="pm-status-dot connected"></span>
+			<span>Connected</span>
+		} else {
+			<span class="pm-status-dot disconnected"></span>
+			<span>Disconnected</span>
+		}
+	</div>
+	<div class="pm-info-content">
+		<p class="pm-info-desc">Desktop bridge and plugin manager for Thymer.</p>
+		<p class="pm-info-hint">Select a plugin to view details.</p>
+		<div class="pm-info-details" style="margin-top: 16px;">
+			<div class="pm-info-row">
+				<span class="pm-info-label">Mode</span>
+				<div class="pm-mode-toggle">
+					<button class={ "pm-mode-btn", templ.KV("active", !devMode) } data-action="set-mode" data-mode="stable">
+						Stable
+					</button>
+					<button class={ "pm-mode-btn", templ.KV("active", devMode) } data-action="set-mode" data-mode="dev">
+						Dev
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+	<div class="pm-info-actions">
+		<button class="pm-btn primary full-width" data-action="update-all">
+			@icon.RefreshCw()
+			<span>Update All</span>
+		</button>
+		<button class="pm-btn full-width" data-action="hide">
+			@icon.LogOut()
+			<span>Close</span>
+		</button>
+	</div>
+}
+
+// InfoPanelPlugin shows details for a selected plugin
+templ InfoPanelPlugin(p PluginInfo) {
+	<div class="pm-info-header">
+		if p.Type == "collection" {
+			@icon.Database()
+		} else {
+			@icon.Puzzle()
+		}
+		<span>{ p.Name }</span>
+		<button class="pm-info-close" data-action="deselect">
+			@icon.X()
+		</button>
+	</div>
+	<div class="pm-info-content">
+		<p class="pm-info-desc">{ p.Description }</p>
+		<div class="pm-info-details">
+			<div class="pm-info-row">
+				<span class="pm-info-label">Type</span>
+				<span class="pm-info-value">{ p.Type }</span>
+			</div>
+			if p.GUID != "" {
+				<div class="pm-info-row">
+					<span class="pm-info-label">GUID</span>
+					<span class="pm-info-value pm-guid">{ p.GUID }</span>
+				</div>
+			}
+			<div class="pm-info-row">
+				<span class="pm-info-label">Local Version</span>
+				<span class="pm-info-value">
+					if p.HasLocalFiles {
+						v{ itoa(p.AvailableVer) }
+					} else {
+						<span class="pm-muted">-</span>
+					}
+				</span>
+			</div>
+			<div class="pm-info-row">
+				<span class="pm-info-label">Installed</span>
+				<span class="pm-info-value">
+					if p.Installed {
+						v{ itoa(p.InstalledVer) }
+						if p.Status == "outdated" {
+							<span class="pm-badge outdated">outdated</span>
+						} else if p.Status == "current" {
+							<span class="pm-badge current">current</span>
+						}
+					} else {
+						<span class="pm-muted">not installed</span>
+					}
+				</span>
+			</div>
+			<div class="pm-info-row">
+				<span class="pm-info-label">Auto-update</span>
+				<label class="pm-toggle">
+					<input
+						type="checkbox"
+						checked?={ p.AutoUpdate }
+						data-action="toggle-auto"
+						data-plugin={ p.ID }
+					/>
+					<span class="pm-toggle-slider"></span>
+				</label>
+			</div>
+		</div>
+	</div>
+	<div class="pm-info-actions">
+		if p.HasLocalFiles {
+			if !p.Installed {
+				<button class="pm-btn primary full-width" data-action="install" data-plugin={ p.ID }>
+					@icon.Download()
+					<span>Install</span>
+				</button>
+			} else if p.Status == "outdated" {
+				<button class="pm-btn primary full-width" data-action="update" data-plugin={ p.ID }>
+					@icon.RefreshCw()
+					<span>Update to v{ itoa(p.AvailableVer) }</span>
+				</button>
+			} else {
+				<button class="pm-btn full-width" data-action="update" data-plugin={ p.ID }>
+					@icon.RefreshCw()
+					<span>Push</span>
+				</button>
+			}
+		} else {
+			<p class="pm-info-hint">This plugin only exists in Thymer (dev mode). No local files to push.</p>
+		}
+		<div class="pm-info-divider"></div>
+		<button class="pm-btn full-width" data-action="update-all">
+			@icon.RefreshCw()
+			<span>Update All</span>
+		</button>
+		<button class="pm-btn full-width" data-action="hide">
+			@icon.LogOut()
+			<span>Close</span>
+		</button>
+	</div>
+}
+
+// PluginCard renders a compact plugin card for the grid
+templ PluginCard(p PluginInfo) {
+	<div
+		class={ "pm-card", templ.KV("installed", p.Installed), templ.KV("outdated", p.Status == "outdated"), templ.KV("selected", false) }
+		data-id={ p.ID }
+		data-name={ p.Name }
+		data-action="select-plugin"
+	>
+		<div class="pm-card-icon">
+			if p.Type == "collection" {
+				@icon.Database()
+			} else {
+				@icon.Puzzle()
+			}
+		</div>
+		<div class="pm-card-content">
+			<div class="pm-card-name">{ p.Name }</div>
+			<div class="pm-card-status">
+				if p.Installed {
+					if p.Status == "outdated" {
+						<span class="pm-ver outdated">v{ itoa(p.InstalledVer) } → v{ itoa(p.AvailableVer) }</span>
+					} else {
+						<span class="pm-ver current">v{ itoa(p.InstalledVer) }</span>
+					}
+				} else if p.HasLocalFiles {
+					<span class="pm-ver available">v{ itoa(p.AvailableVer) }</span>
+				} else {
+					<span class="pm-ver">v{ itoa(p.InstalledVer) }</span>
+				}
+			</div>
+		</div>
+		<div class="pm-card-indicator">
+			if p.Status == "outdated" {
+				@icon.ArrowUp()
+			} else if p.Status == "current" {
+				@icon.Check()
+			} else if !p.HasLocalFiles {
+				@icon.Code()
+			}
+		</div>
+	</div>
+}
+
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	result := ""
+	for i > 0 {
+		result = string(rune('0'+i%10)) + result
+		i /= 10
+	}
+	return result
+}

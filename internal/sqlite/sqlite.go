@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -70,6 +71,19 @@ func New(cfg Config) (*DB, error) {
 // migrate runs database migrations.
 func (d *DB) migrate() error {
 	migrations := []string{
+		// source_records: minimal table for hash-based change detection
+		// No raw data stored - we can re-fetch from source
+		`CREATE TABLE IF NOT EXISTS source_records (
+			source TEXT NOT NULL,
+			external_id TEXT NOT NULL,
+			content_hash TEXT NOT NULL,
+			source_updated_at DATETIME,
+			fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (source, external_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_source_records_hash ON source_records(content_hash)`,
+
+		// records: mapped/normalized records for indexing and search
 		`CREATE TABLE IF NOT EXISTS records (
 			id TEXT PRIMARY KEY,
 			source TEXT NOT NULL,
@@ -85,6 +99,18 @@ func (d *DB) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_records_source ON records(source)`,
 		`CREATE INDEX IF NOT EXISTS idx_records_thymer_uuid ON records(thymer_uuid)`,
 
+		// Add new columns to existing records table (safe - ignores if exists)
+		`ALTER TABLE records ADD COLUMN collection TEXT DEFAULT ''`,
+		`ALTER TABLE records ADD COLUMN title TEXT DEFAULT ''`,
+		`ALTER TABLE records ADD COLUMN status TEXT DEFAULT ''`,
+		`ALTER TABLE records ADD COLUMN external_state TEXT DEFAULT ''`,
+		`ALTER TABLE records ADD COLUMN type TEXT DEFAULT ''`,
+
+		// Create indexes for new columns
+		`CREATE INDEX IF NOT EXISTS idx_records_collection ON records(collection)`,
+		`CREATE INDEX IF NOT EXISTS idx_records_status ON records(status)`,
+
+		// events: logged events for timeline
 		`CREATE TABLE IF NOT EXISTS events (
 			id TEXT PRIMARY KEY,
 			type TEXT NOT NULL,
@@ -97,21 +123,38 @@ func (d *DB) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_events_record_id ON events(record_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp)`,
 
+		// sync_state: tracks last sync time per source for incremental fetches
 		`CREATE TABLE IF NOT EXISTS sync_state (
 			source TEXT PRIMARY KEY,
 			cursor TEXT,
 			last_sync DATETIME,
 			metadata BLOB
 		)`,
+		// Add new column to sync_state
+		`ALTER TABLE sync_state ADD COLUMN last_source_updated_at DATETIME`,
 	}
 
+	// Run migrations, ignoring "duplicate column" errors from ALTER TABLE
 	for _, m := range migrations {
-		if _, err := d.db.Exec(m); err != nil {
-			return fmt.Errorf("migration failed: %w", err)
+		_, err := d.db.Exec(m)
+		if err != nil {
+			// Ignore "duplicate column" errors - column already exists
+			if !isDuplicateColumnError(err) {
+				return fmt.Errorf("migration failed: %w", err)
+			}
 		}
 	}
 
 	return nil
+}
+
+// isDuplicateColumnError checks if the error is a "duplicate column" error
+func isDuplicateColumnError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "duplicate column") || strings.Contains(errStr, "already exists")
 }
 
 // UpsertRecord inserts or updates a record.
@@ -194,6 +237,73 @@ func (d *DB) GetEvents(ctx context.Context, recordID string, since, until time.T
 	return events, rows.Err()
 }
 
+// SourceRecord represents a hash entry for change detection.
+type SourceRecord struct {
+	Source          string
+	ExternalID      string
+	ContentHash     string
+	SourceUpdatedAt *time.Time
+	FetchedAt       time.Time
+}
+
+// GetSourceRecordHash retrieves the content hash for a source record.
+func (d *DB) GetSourceRecordHash(ctx context.Context, source, externalID string) (string, error) {
+	var hash sql.NullString
+	err := d.db.QueryRowContext(ctx, `
+		SELECT content_hash FROM source_records WHERE source = ? AND external_id = ?
+	`, source, externalID).Scan(&hash)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return hash.String, err
+}
+
+// UpsertSourceRecord inserts or updates a source record hash.
+func (d *DB) UpsertSourceRecord(ctx context.Context, sr *SourceRecord) error {
+	_, err := d.db.ExecContext(ctx, `
+		INSERT INTO source_records (source, external_id, content_hash, source_updated_at, fetched_at)
+		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(source, external_id) DO UPDATE SET
+			content_hash = excluded.content_hash,
+			source_updated_at = excluded.source_updated_at,
+			fetched_at = CURRENT_TIMESTAMP
+	`, sr.Source, sr.ExternalID, sr.ContentHash, sr.SourceUpdatedAt)
+	return err
+}
+
+// SyncState represents sync state for a source.
+type SyncState struct {
+	Source              string
+	Cursor              string
+	LastSync            *time.Time
+	LastSourceUpdatedAt *time.Time
+}
+
+// GetSyncState retrieves the full sync state for a source.
+func (d *DB) GetSyncState(ctx context.Context, source string) (*SyncState, error) {
+	state := &SyncState{Source: source}
+	var cursor, lastSync, lastSourceUpdatedAt sql.NullString
+	err := d.db.QueryRowContext(ctx, `
+		SELECT cursor, last_sync, last_source_updated_at FROM sync_state WHERE source = ?
+	`, source).Scan(&cursor, &lastSync, &lastSourceUpdatedAt)
+	if err == sql.ErrNoRows {
+		return state, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	state.Cursor = cursor.String
+	if lastSync.Valid {
+		t, _ := time.Parse(time.RFC3339, lastSync.String)
+		state.LastSync = &t
+	}
+	if lastSourceUpdatedAt.Valid {
+		t, _ := time.Parse(time.RFC3339, lastSourceUpdatedAt.String)
+		state.LastSourceUpdatedAt = &t
+	}
+	return state, nil
+}
+
 // GetSyncCursor retrieves the sync cursor for a source.
 func (d *DB) GetSyncCursor(ctx context.Context, source string) (string, error) {
 	var cursor sql.NullString
@@ -215,6 +325,19 @@ func (d *DB) SetSyncCursor(ctx context.Context, source, cursor string) error {
 			cursor = excluded.cursor,
 			last_sync = CURRENT_TIMESTAMP
 	`, source, cursor)
+	return err
+}
+
+// UpdateSyncState updates the full sync state for a source.
+func (d *DB) UpdateSyncState(ctx context.Context, state *SyncState) error {
+	_, err := d.db.ExecContext(ctx, `
+		INSERT INTO sync_state (source, cursor, last_sync, last_source_updated_at)
+		VALUES (?, ?, CURRENT_TIMESTAMP, ?)
+		ON CONFLICT(source) DO UPDATE SET
+			cursor = excluded.cursor,
+			last_sync = CURRENT_TIMESTAMP,
+			last_source_updated_at = excluded.last_source_updated_at
+	`, state.Source, state.Cursor, state.LastSourceUpdatedAt)
 	return err
 }
 

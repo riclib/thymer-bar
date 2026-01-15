@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -16,6 +17,9 @@ type Client struct {
 	mu          sync.RWMutex
 	connections []*connection
 	msgID       int64
+
+	// Callback when connection count changes
+	OnConnectionChange func(count int)
 }
 
 type connection struct {
@@ -59,6 +63,7 @@ func New() *Client {
 
 // AddConnection adds a new WebSocket connection from a Thymer instance.
 func (c *Client) AddConnection(ws *websocket.Conn, id string) {
+	slog.Info("client connected", "client", id[:8])
 	conn := &connection{
 		ws:       ws,
 		id:       id,
@@ -68,7 +73,15 @@ func (c *Client) AddConnection(ws *websocket.Conn, id string) {
 
 	c.mu.Lock()
 	c.connections = append(c.connections, conn)
+	count := len(c.connections)
 	c.mu.Unlock()
+
+	slog.Info("connection count updated", "total", count)
+
+	// Notify callback
+	if c.OnConnectionChange != nil {
+		c.OnConnectionChange(count)
+	}
 
 	// Start reading from this connection
 	go c.readLoop(conn)
@@ -77,15 +90,22 @@ func (c *Client) AddConnection(ws *websocket.Conn, id string) {
 // RemoveConnection removes a connection by ID.
 func (c *Client) RemoveConnection(id string) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
+	var count int
 	for i, conn := range c.connections {
 		if conn.id == id {
 			conn.ws.Close()
 			c.connections = append(c.connections[:i], c.connections[i+1:]...)
+			count = len(c.connections)
+			c.mu.Unlock()
+
+			// Notify callback
+			if c.OnConnectionChange != nil {
+				c.OnConnectionChange(count)
+			}
 			return
 		}
 	}
+	c.mu.Unlock()
 }
 
 // ConnectionCount returns the number of active connections.
@@ -132,9 +152,11 @@ func (c *Client) readLoop(conn *connection) {
 			continue
 		}
 
-		// Send response if any
+		// Send response if any (must lock to prevent concurrent writes)
 		if response != nil {
-			conn.ws.WriteMessage(1, response) // 1 = TextMessage
+			conn.mu.Lock()
+			conn.ws.WriteMessage(websocket.TextMessage, response)
+			conn.mu.Unlock()
 		}
 	}
 }
@@ -149,6 +171,7 @@ func (c *Client) send(ctx context.Context, msg *Message) (*Response, error) {
 	c.mu.Unlock()
 
 	if len(connections) == 0 {
+		slog.Warn("no connections available", "type", msg.Type, "action", msg.Action)
 		return nil, fmt.Errorf("no Thymer connections available")
 	}
 
@@ -157,14 +180,19 @@ func (c *Client) send(ctx context.Context, msg *Message) (*Response, error) {
 		return nil, fmt.Errorf("failed to marshal message: %w", err)
 	}
 
+	slog.Debug("sending message", "id", msg.ID, "type", msg.Type, "action", msg.Action, "connections", len(connections))
+
 	// Try each connection until one succeeds
 	var lastErr error
-	for _, conn := range connections {
+	for i, conn := range connections {
+		slog.Debug("trying connection", "attempt", i+1, "total", len(connections), "client", conn.id[:8])
 		resp, err := c.sendToConnection(ctx, conn, msg.ID, data)
 		if err != nil {
+			slog.Warn("connection failed", "client", conn.id[:8], "error", err)
 			lastErr = err
 			continue
 		}
+		slog.Debug("got response", "id", msg.ID)
 		return resp, nil
 	}
 
@@ -186,18 +214,22 @@ func (c *Client) sendToConnection(ctx context.Context, conn *connection, id int6
 		return nil, fmt.Errorf("failed to send: %w", err)
 	}
 
+	slog.Debug("waiting for response", "id", id)
 	select {
 	case resp := <-respCh:
 		if resp.Error != "" {
+			slog.Error("response error", "id", id, "error", resp.Error)
 			return nil, fmt.Errorf("thymer error: %s", resp.Error)
 		}
 		return resp, nil
 	case <-ctx.Done():
+		slog.Warn("context cancelled", "id", id)
 		conn.mu.Lock()
 		delete(conn.pending, id)
 		conn.mu.Unlock()
 		return nil, ctx.Err()
 	case <-time.After(30 * time.Second):
+		slog.Error("timeout waiting for response", "id", id, "timeout", "30s")
 		conn.mu.Lock()
 		delete(conn.pending, id)
 		conn.mu.Unlock()
@@ -247,6 +279,39 @@ func (c *Client) UpdateRecord(ctx context.Context, guid string, fields map[strin
 	return err
 }
 
+// SyncResult represents the result of a sync operation.
+type SyncResult struct {
+	GUID   string `json:"guid"`
+	Action string `json:"action"` // "created" or "updated"
+}
+
+// SyncRecord syncs a record to Thymer (upsert by external_id).
+// Returns the GUID and whether it was created or updated.
+func (c *Client) SyncRecord(ctx context.Context, collection, externalID, name string, fields map[string]any) (*SyncResult, error) {
+	data, _ := json.Marshal(map[string]any{
+		"collection":  collection,
+		"external_id": externalID,
+		"name":        name,
+		"fields":      fields,
+	})
+
+	resp, err := c.send(ctx, &Message{
+		Type:   "request",
+		Action: "syncRecord",
+		Data:   data,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var result SyncResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &result, nil
+}
+
 // FindRecord finds a record by external ID.
 func (c *Client) FindRecord(ctx context.Context, collection, externalID string) (*Record, error) {
 	data, _ := json.Marshal(map[string]any{
@@ -285,7 +350,82 @@ func (c *Client) InstallPlugin(ctx context.Context, pluginData []byte) error {
 	return err
 }
 
+// InstalledPlugin represents a plugin installed in Thymer.
+type InstalledPlugin struct {
+	Name string `json:"name"`
+	GUID string `json:"guid"`
+	Type string `json:"type"`
+	Ver  int    `json:"ver"`
+}
+
+// GetInstalledPlugins queries Thymer for all installed plugins.
+func (c *Client) GetInstalledPlugins(ctx context.Context) ([]InstalledPlugin, error) {
+	resp, err := c.send(ctx, &Message{
+		Type: "get_installed_plugins",
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Plugins []InstalledPlugin `json:"plugins"`
+		Error   string            `json:"error,omitempty"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if result.Error != "" {
+		return nil, fmt.Errorf("thymer error: %s", result.Error)
+	}
+
+	return result.Plugins, nil
+}
+
 // Available returns true if at least one Thymer connection is available.
 func (c *Client) Available() bool {
 	return c.ConnectionCount() > 0
+}
+
+// SendToAll broadcasts a message to all connected Thymer instances (fire-and-forget).
+func (c *Client) SendToAll(msg any) {
+	c.mu.RLock()
+	connections := make([]*connection, len(c.connections))
+	copy(connections, c.connections)
+	c.mu.RUnlock()
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+
+	for _, conn := range connections {
+		conn.mu.Lock()
+		conn.ws.WriteMessage(websocket.TextMessage, data)
+		conn.mu.Unlock()
+	}
+}
+
+// SendToOne sends a message to the first available Thymer connection (fire-and-forget).
+// Use this for operations that should only happen once (like plugin installation).
+func (c *Client) SendToOne(msg any) {
+	c.mu.RLock()
+	var conn *connection
+	if len(c.connections) > 0 {
+		conn = c.connections[0]
+	}
+	c.mu.RUnlock()
+
+	if conn == nil {
+		return
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+
+	conn.mu.Lock()
+	conn.ws.WriteMessage(websocket.TextMessage, data)
+	conn.mu.Unlock()
 }

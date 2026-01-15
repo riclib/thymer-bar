@@ -1,0 +1,178 @@
+{
+  "ver": 1,
+  "name": "Captures",
+  "icon": "ti-bookmark",
+  "home": false,
+  "item_name": "Capture",
+  "description": "Web pages, highlights, and bookmarks from any source",
+  "show_sidebar_items": true,
+  "show_cmdpal_items": true,
+  "page_field_ids": [
+    "source",
+    "site",
+    "author",
+    "captured_at",
+    "tags"
+  ],
+  "fields": [
+    {
+      "id": "source",
+      "label": "Source",
+      "icon": "ti-source-code",
+      "type": "choice",
+      "read_only": false,
+      "active": true,
+      "choices": [
+        {
+          "id": "web",
+          "label": "Web",
+          "color": "9",
+          "active": true
+        },
+        {
+          "id": "readwise",
+          "label": "Readwise",
+          "color": "3",
+          "active": true
+        },
+        {
+          "id": "telegram",
+          "label": "Telegram",
+          "color": "6",
+          "active": true
+        },
+        {
+          "id": "kindle",
+          "label": "Kindle",
+          "color": "4",
+          "active": true
+        },
+        {
+          "id": "manual",
+          "label": "Manual",
+          "color": "1",
+          "active": true
+        }
+      ]
+    },
+    {
+      "id": "site",
+      "label": "Site",
+      "icon": "ti-world",
+      "type": "text",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "author",
+      "label": "Author",
+      "icon": "ti-user",
+      "type": "text",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "url",
+      "label": "URL",
+      "icon": "ti-link",
+      "type": "url",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "excerpt",
+      "label": "Excerpt",
+      "icon": "ti-quote",
+      "type": "text",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "captured_at",
+      "label": "Captured",
+      "icon": "ti-clock",
+      "type": "datetime",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "published_at",
+      "label": "Published",
+      "icon": "ti-calendar",
+      "type": "datetime",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "tags",
+      "label": "Tags",
+      "icon": "ti-tags",
+      "type": "tags",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "image",
+      "label": "Image",
+      "icon": "ti-photo",
+      "type": "url",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "title",
+      "label": "Title",
+      "icon": "ti-abc",
+      "type": "text",
+      "read_only": false,
+      "active": true
+    }
+  ],
+  "views": [
+    {
+      "id": "VCAP001",
+      "label": "By Source",
+      "description": "Captures grouped by source",
+      "icon": "ti-layout-board",
+      "type": "board",
+      "shown": true,
+      "read_only": false,
+      "field_ids": [
+        "site",
+        "author",
+        "captured_at"
+      ],
+      "sort_field_id": "captured_at",
+      "sort_dir": "desc",
+      "group_by_field_id": "source",
+      "opts": {}
+    },
+    {
+      "id": "VCAP002",
+      "label": "Recent",
+      "description": "All captures by date",
+      "icon": "ti-clock",
+      "type": "table",
+      "shown": true,
+      "read_only": false,
+      "field_ids": [
+        "source",
+        "site",
+        "author",
+        "captured_at"
+      ],
+      "sort_field_id": "captured_at",
+      "sort_dir": "desc",
+      "group_by_field_id": null,
+      "opts": {}
+    }
+  ],
+  "sidebar_record_sort_dir": "desc",
+  "sidebar_record_sort_field_id": "captured_at",
+  "managed": {
+    "fields": true,
+    "views": true,
+    "sidebar": true
+  },
+  "custom": {}
+}

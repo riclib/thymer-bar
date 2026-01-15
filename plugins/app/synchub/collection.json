@@ -1,0 +1,103 @@
+{
+  "ver": 16,
+  "name": "Sync Hub",
+  "icon": "ti-cloud",
+  "home": false,
+  "item_name": "Config",
+  "description": "Desktop bridge and tool registry for thymer-bar - Test",
+  "show_sidebar_items": false,
+  "show_cmdpal_items": false,
+  "page_field_ids": [
+    "status",
+    "ws_port",
+    "last_connected"
+  ],
+  "fields": [
+    {
+      "id": "status",
+      "label": "Status",
+      "icon": "ti-activity",
+      "type": "choice",
+      "many": false,
+      "read_only": false,
+      "active": true,
+      "choices": [
+        {
+          "id": "connected",
+          "label": "Connected",
+          "color": "2",
+          "active": true
+        },
+        {
+          "id": "disconnected",
+          "label": "Disconnected",
+          "color": "0",
+          "active": true
+        },
+        {
+          "id": "connecting",
+          "label": "Connecting",
+          "color": "1",
+          "active": true
+        }
+      ]
+    },
+    {
+      "id": "ws_port",
+      "label": "WebSocket Port",
+      "icon": "ti-network",
+      "type": "number",
+      "many": false,
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "last_connected",
+      "label": "Last Connected",
+      "icon": "ti-clock",
+      "type": "datetime",
+      "many": false,
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "title",
+      "label": "Title",
+      "icon": "ti-abc",
+      "type": "text",
+      "many": false,
+      "read_only": false,
+      "active": true
+    }
+  ],
+  "views": [
+    {
+      "id": "VSYNCHUB001",
+      "label": "Status",
+      "description": "Connection status",
+      "icon": "ti-dashboard",
+      "type": "table",
+      "shown": true,
+      "read_only": false,
+      "field_ids": [
+        "status",
+        "ws_port",
+        "last_connected"
+      ],
+      "sort_field_id": "title",
+      "sort_dir": "asc",
+      "group_by_field_id": null,
+      "opts": {}
+    }
+  ],
+  "sidebar_record_sort_dir": "asc",
+  "sidebar_record_sort_field_id": "title",
+  "managed": {
+    "fields": true,
+    "views": true,
+    "sidebar": true
+  },
+  "custom": {
+    "ws_port": 8496
+  }
+}

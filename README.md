@@ -53,12 +53,41 @@ thymer-bar implements **event sourcing for personal productivity**:
 
 ## Data Storage
 
+Follows [XDG Base Directory](https://specifications.freedesktop.org/basedir-spec/latest/) on all platforms for consistency.
+
+### Linux & macOS
+
 ```
+~/.config/thymer-bar/
+└── config.json              # Settings, API tokens, repo list
+
 ~/.local/share/thymer-bar/
-├── nats/              # JetStream storage
-├── thymer-bar.db      # SQLite (sync state, ID mappings)
-└── config.toml        # Configuration
+├── thymer-bar.db            # SQLite projection
+└── jetstream/               # NATS JetStream (event log)
+
+~/.local/state/thymer-bar/
+└── sync-state.json          # Sync cursors, timestamps
+
+~/.cache/thymer-bar/
+└── ...                      # Temporary files
 ```
+
+### Data Architecture
+
+- **JetStream** = source of truth (immutable event log)
+- **SQLite** = projection (queryable, rebuildable from events)
+- **Config** = user settings (versionable, shareable)
+- **State** = runtime state (cursors, not critical)
+
+If SQLite corrupts, rebuild from JetStream. If JetStream is lost, SQLite still has the projection.
+
+### Environment Variables
+
+Override paths via XDG environment variables:
+- `XDG_CONFIG_HOME` (default: `~/.config`)
+- `XDG_DATA_HOME` (default: `~/.local/share`)
+- `XDG_STATE_HOME` (default: `~/.local/state`)
+- `XDG_CACHE_HOME` (default: `~/.cache`)
 
 ## Development
 

@@ -1,0 +1,551 @@
+package ui
+
+import (
+	"context"
+	"io"
+	"time"
+
+	"github.com/riclib/icon"
+)
+
+// AuthStatus represents authentication state
+type AuthStatus string
+
+const (
+	AuthNotConfigured AuthStatus = "not_configured"
+	AuthAuthenticated AuthStatus = "authenticated"
+	AuthExpired       AuthStatus = "expired"
+	AuthError         AuthStatus = "error"
+)
+
+// SyncStatus represents sync state
+type SyncStatus string
+
+const (
+	SyncIdle     SyncStatus = "idle"
+	SyncRunning  SyncStatus = "running"
+	SyncError    SyncStatus = "error"
+	SyncDisabled SyncStatus = "disabled"
+)
+
+// SyncSource represents a data sync source
+type SyncSource struct {
+	ID          string
+	Name        string
+	Description string
+	Icon        string // tabler icon name
+	AuthStatus  AuthStatus
+	SyncStatus  SyncStatus
+	Enabled     bool
+	LastSync    *time.Time
+	LastError   string
+	ItemCount   int      // Number of synced items
+	ConfigItems []string // Source-specific config summary (e.g., repo names)
+}
+
+// SyncHistoryEntry represents a past sync operation
+type SyncHistoryEntry struct {
+	Source    string
+	Timestamp time.Time
+	Duration  time.Duration
+	ItemCount int
+	Status    string // "success", "partial", "error"
+	Message   string
+}
+
+// SyncManager renders the full sync management dashboard
+templ SyncManager(sources []SyncSource, history []SyncHistoryEntry) {
+	<div class="sync-manager">
+		<div class="sm-columns">
+			<!-- Sources Column -->
+			<div class="sm-column">
+				<div class="sm-column-header">
+					@icon.RefreshCw()
+					<span>Sync Sources</span>
+				</div>
+				<div class="sm-source-list">
+					for _, s := range sources {
+						@SyncSourceCard(s)
+					}
+				</div>
+			</div>
+			<!-- Info Panel -->
+			<div class="sm-info-panel" id="sync-info-panel">
+				@SyncInfoDefault(sources, history)
+			</div>
+		</div>
+	</div>
+}
+
+// SyncInfoDefault shows overview when no source selected
+templ SyncInfoDefault(sources []SyncSource, history []SyncHistoryEntry) {
+	<div class="sm-info-header">
+		@icon.Cloud()
+		<span>Sync Dashboard</span>
+	</div>
+	<div class="sm-info-content">
+		<div class="sm-stats">
+			<div class="sm-stat">
+				<span class="sm-stat-value">{ countEnabled(sources) }</span>
+				<span class="sm-stat-label">Active Sources</span>
+			</div>
+			<div class="sm-stat">
+				<span class="sm-stat-value">{ countAuthenticated(sources) }</span>
+				<span class="sm-stat-label">Authenticated</span>
+			</div>
+			<div class="sm-stat">
+				<span class="sm-stat-value">{ totalItems(sources) }</span>
+				<span class="sm-stat-label">Total Items</span>
+			</div>
+		</div>
+		<p class="sm-info-hint">Select a source to configure authentication and sync settings.</p>
+
+		if len(history) > 0 {
+			<div class="sm-history-section">
+				<div class="sm-section-header">Recent Activity</div>
+				<div class="sm-history-list">
+					for i, h := range history {
+						if i < 5 {
+							@SyncHistoryItem(h)
+						}
+					}
+				</div>
+			</div>
+		}
+	</div>
+	<div class="sm-info-actions">
+		<button class="sm-btn primary full-width" data-action="sync-all">
+			@icon.RefreshCw()
+			<span>Sync All Enabled</span>
+		</button>
+		<button class="sm-btn full-width" data-action="hide">
+			@icon.LogOut()
+			<span>Close</span>
+		</button>
+	</div>
+}
+
+// SyncInfoSource shows details for a selected source
+templ SyncInfoSource(s SyncSource) {
+	<div class="sm-info-header">
+		@sourceIcon(s.Icon)
+		<span>{ s.Name }</span>
+		<button class="sm-info-close" data-action="deselect">
+			@icon.X()
+		</button>
+	</div>
+	<div class="sm-info-content">
+		<p class="sm-info-desc">{ s.Description }</p>
+
+		<!-- Auth Status -->
+		<div class="sm-auth-section">
+			<div class="sm-section-header">Authentication</div>
+			<div class="sm-auth-status">
+				@authStatusBadge(s.AuthStatus)
+				if s.AuthStatus == AuthAuthenticated {
+					<button class="sm-btn-small" data-action="disconnect" data-source={ s.ID }>
+						Disconnect
+					</button>
+				} else {
+					<button class="sm-btn-small primary" data-action="connect" data-source={ s.ID }>
+						Connect
+					</button>
+				}
+			</div>
+		</div>
+
+		<!-- Sync Status -->
+		<div class="sm-details">
+			<div class="sm-info-row">
+				<span class="sm-info-label">Status</span>
+				<span class="sm-info-value">
+					@syncStatusBadge(s.SyncStatus, s.Enabled)
+				</span>
+			</div>
+			<div class="sm-info-row">
+				<span class="sm-info-label">Enabled</span>
+				<label class="sm-toggle">
+					<input
+						type="checkbox"
+						checked?={ s.Enabled }
+						data-action="toggle-enabled"
+						data-source={ s.ID }
+						disabled?={ s.AuthStatus != AuthAuthenticated }
+					/>
+					<span class="sm-toggle-slider"></span>
+				</label>
+			</div>
+			<div class="sm-info-row">
+				<span class="sm-info-label">Last Sync</span>
+				<span class="sm-info-value">
+					if s.LastSync != nil {
+						{ formatTime(*s.LastSync) }
+					} else {
+						<span class="sm-muted">Never</span>
+					}
+				</span>
+			</div>
+			<div class="sm-info-row">
+				<span class="sm-info-label">Items</span>
+				<span class="sm-info-value">{ itoa(s.ItemCount) }</span>
+			</div>
+			if s.LastError != "" {
+				<div class="sm-info-row error">
+					<span class="sm-info-label">Error</span>
+					<span class="sm-info-value sm-error">{ s.LastError }</span>
+				</div>
+			}
+		</div>
+
+		<!-- Source Config -->
+		if len(s.ConfigItems) > 0 {
+			<div class="sm-config-section">
+				<div class="sm-section-header">
+					Configuration
+					<button class="sm-btn-icon" data-action="configure" data-source={ s.ID }>
+						@icon.Settings()
+					</button>
+				</div>
+				<div class="sm-config-items">
+					for _, item := range s.ConfigItems {
+						<span class="sm-config-item">{ item }</span>
+					}
+				</div>
+			</div>
+		} else if s.AuthStatus == AuthAuthenticated {
+			<div class="sm-config-section">
+				<div class="sm-section-header">Configuration</div>
+				<button class="sm-btn full-width" data-action="configure" data-source={ s.ID }>
+					@icon.Settings()
+					<span>Configure { s.Name }</span>
+				</button>
+			</div>
+		}
+	</div>
+	<!-- Progress indicator for real-time sync feedback -->
+	<div id="sync-progress" class="sm-sync-progress"></div>
+	<div class="sm-info-actions">
+		if s.AuthStatus == AuthAuthenticated && s.Enabled {
+			<button class="sm-btn primary full-width" data-action="sync-now" data-source={ s.ID }>
+				@icon.RefreshCw()
+				<span>Sync Now</span>
+			</button>
+		}
+		<button class="sm-btn full-width" data-action="view-history" data-source={ s.ID }>
+			@icon.History()
+			<span>View History</span>
+		</button>
+		<div class="sm-info-divider"></div>
+		<button class="sm-btn full-width" data-action="hide">
+			@icon.LogOut()
+			<span>Close</span>
+		</button>
+	</div>
+}
+
+// SyncSourceCard renders a source card for the list
+templ SyncSourceCard(s SyncSource) {
+	<div
+		class={ "sm-card", templ.KV("enabled", s.Enabled), templ.KV("error", s.SyncStatus == SyncError), templ.KV("selected", false) }
+		data-id={ s.ID }
+		data-action="select-source"
+	>
+		<div class="sm-card-icon">
+			@sourceIcon(s.Icon)
+		</div>
+		<div class="sm-card-content">
+			<div class="sm-card-name">{ s.Name }</div>
+			<div class="sm-card-status">
+				if s.AuthStatus != AuthAuthenticated {
+					<span class="sm-status not-configured">Not connected</span>
+				} else if !s.Enabled {
+					<span class="sm-status disabled">Disabled</span>
+				} else if s.SyncStatus == SyncRunning {
+					<span class="sm-status syncing">Syncing...</span>
+				} else if s.SyncStatus == SyncError {
+					<span class="sm-status error">Error</span>
+				} else {
+					<span class="sm-status ok">{ itoa(s.ItemCount) } items</span>
+				}
+			</div>
+		</div>
+		<div class="sm-card-indicator">
+			if s.AuthStatus != AuthAuthenticated {
+				@icon.Link()
+			} else if s.SyncStatus == SyncRunning {
+				@icon.RefreshCw()
+			} else if s.SyncStatus == SyncError {
+				@icon.X()
+			} else if s.Enabled {
+				@icon.Check()
+			}
+		</div>
+	</div>
+}
+
+// SyncHistoryItem renders a history entry
+templ SyncHistoryItem(h SyncHistoryEntry) {
+	<div class={ "sm-history-item", h.Status }>
+		<div class="sm-history-source">{ h.Source }</div>
+		<div class="sm-history-time">{ formatTime(h.Timestamp) }</div>
+		<div class="sm-history-result">
+			if h.Status == "success" {
+				<span class="sm-badge success">{ itoa(h.ItemCount) } items</span>
+			} else if h.Status == "partial" {
+				<span class="sm-badge warning">{ h.Message }</span>
+			} else {
+				<span class="sm-badge error">{ h.Message }</span>
+			}
+		</div>
+	</div>
+}
+
+// SyncConfigGitHub renders GitHub-specific configuration
+templ SyncConfigGitHub(repos []GitHubRepo, orgs []string) {
+	<div class="sm-config-panel">
+		<div class="sm-config-header">
+			@icon.Github()
+			<span>GitHub Configuration</span>
+			<button class="sm-config-close" data-action="close-config">
+				@icon.X()
+			</button>
+		</div>
+		<div class="sm-config-content">
+			<div class="sm-config-section">
+				<div class="sm-section-header">
+					Repositories
+					<span class="sm-count">{ itoa(len(repos)) }</span>
+				</div>
+				<p class="sm-hint">Select repositories to sync issues and PRs from.</p>
+				<div class="sm-filter">
+					<input
+						type="text"
+						class="sm-filter-input"
+						placeholder="Filter repositories..."
+						data-action="filter-repos"
+					/>
+				</div>
+				<div class="sm-repo-list" data-repo-list>
+					for _, repo := range repos {
+						<label class="sm-repo-item" data-repo-name={ repo.FullName }>
+							<input
+								type="checkbox"
+								checked?={ repo.Enabled }
+								data-action="toggle-repo"
+								data-repo={ repo.FullName }
+							/>
+							<span class="sm-repo-name">{ repo.FullName }</span>
+							if repo.Private {
+								@icon.Lock()
+							}
+						</label>
+					}
+				</div>
+				<button class="sm-btn full-width" data-action="refresh-repos">
+					@icon.RefreshCw()
+					<span>Refresh Repository List</span>
+				</button>
+			</div>
+		</div>
+		<div class="sm-config-actions">
+			<button class="sm-btn primary" data-action="save-config" data-source="github">
+				Save Configuration
+			</button>
+			<button class="sm-btn" data-action="close-config">
+				Cancel
+			</button>
+		</div>
+	</div>
+}
+
+// GitHubRepo represents a GitHub repository for config
+type GitHubRepo struct {
+	FullName string
+	Private  bool
+	Enabled  bool
+}
+
+// SyncConfigGoogleCalendar renders Google Calendar configuration
+templ SyncConfigGoogleCalendar(calendars []GoogleCalendar) {
+	<div class="sm-config-panel">
+		<div class="sm-config-header">
+			@icon.Calendar()
+			<span>Google Calendar Configuration</span>
+			<button class="sm-config-close" data-action="close-config">
+				@icon.X()
+			</button>
+		</div>
+		<div class="sm-config-content">
+			<div class="sm-config-section">
+				<div class="sm-section-header">Calendars</div>
+				<p class="sm-hint">Select calendars to sync events from.</p>
+				<div class="sm-calendar-list">
+					for _, cal := range calendars {
+						<label class="sm-calendar-item">
+							<input
+								type="checkbox"
+								checked?={ cal.Enabled }
+								data-action="toggle-calendar"
+								data-calendar={ cal.ID }
+							/>
+							<span class="sm-calendar-color" style={ "background:" + cal.Color }></span>
+							<span class="sm-calendar-name">{ cal.Name }</span>
+						</label>
+					}
+				</div>
+			</div>
+			<div class="sm-config-section">
+				<div class="sm-section-header">Sync Range</div>
+				<div class="sm-range-options">
+					<label class="sm-radio">
+						<input type="radio" name="range" value="30" checked/>
+						<span>Last 30 days + Next 90 days</span>
+					</label>
+					<label class="sm-radio">
+						<input type="radio" name="range" value="90"/>
+						<span>Last 90 days + Next 180 days</span>
+					</label>
+					<label class="sm-radio">
+						<input type="radio" name="range" value="365"/>
+						<span>Last year + Next year</span>
+					</label>
+				</div>
+			</div>
+		</div>
+		<div class="sm-config-actions">
+			<button class="sm-btn primary" data-action="save-config" data-source="google-calendar">
+				Save Configuration
+			</button>
+			<button class="sm-btn" data-action="close-config">
+				Cancel
+			</button>
+		</div>
+	</div>
+}
+
+// GoogleCalendar represents a Google Calendar for config
+type GoogleCalendar struct {
+	ID      string
+	Name    string
+	Color   string
+	Primary bool
+	Enabled bool
+}
+
+// Helper functions
+func sourceIcon(iconName string) templ.Component {
+	switch iconName {
+	case "github":
+		return icon.Github()
+	case "google":
+		return icon.Calendar()
+	case "readwise":
+		return icon.BookOpen()
+	case "linear":
+		return icon.SquareStack()
+	default:
+		return icon.Cloud()
+	}
+}
+
+func authStatusBadge(status AuthStatus) templ.Component {
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		var class, text string
+		switch status {
+		case AuthAuthenticated:
+			class = "authenticated"
+			text = "Connected"
+		case AuthExpired:
+			class = "expired"
+			text = "Expired"
+		case AuthError:
+			class = "error"
+			text = "Error"
+		default:
+			class = "not-configured"
+			text = "Not connected"
+		}
+		_, err := w.Write([]byte(`<span class="sm-auth-badge ` + class + `">` + text + `</span>`))
+		return err
+	})
+}
+
+func syncStatusBadge(status SyncStatus, enabled bool) templ.Component {
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		var class, text string
+		if !enabled {
+			class = "disabled"
+			text = "Disabled"
+		} else {
+			switch status {
+			case SyncRunning:
+				class = "running"
+				text = "Syncing"
+			case SyncError:
+				class = "error"
+				text = "Error"
+			default:
+				class = "idle"
+				text = "Ready"
+			}
+		}
+		_, err := w.Write([]byte(`<span class="sm-sync-badge ` + class + `">` + text + `</span>`))
+		return err
+	})
+}
+
+func formatTime(t time.Time) string {
+	now := time.Now()
+	diff := now.Sub(t)
+
+	if diff < time.Minute {
+		return "just now"
+	} else if diff < time.Hour {
+		mins := int(diff.Minutes())
+		if mins == 1 {
+			return "1 minute ago"
+		}
+		return itoa(mins) + " minutes ago"
+	} else if diff < 24*time.Hour {
+		hours := int(diff.Hours())
+		if hours == 1 {
+			return "1 hour ago"
+		}
+		return itoa(hours) + " hours ago"
+	} else if diff < 7*24*time.Hour {
+		days := int(diff.Hours() / 24)
+		if days == 1 {
+			return "yesterday"
+		}
+		return itoa(days) + " days ago"
+	}
+	return t.Format("Jan 2")
+}
+
+func countEnabled(sources []SyncSource) string {
+	count := 0
+	for _, s := range sources {
+		if s.Enabled {
+			count++
+		}
+	}
+	return itoa(count)
+}
+
+func countAuthenticated(sources []SyncSource) string {
+	count := 0
+	for _, s := range sources {
+		if s.AuthStatus == AuthAuthenticated {
+			count++
+		}
+	}
+	return itoa(count)
+}
+
+func totalItems(sources []SyncSource) string {
+	total := 0
+	for _, s := range sources {
+		total += s.ItemCount
+	}
+	return itoa(total)
+}

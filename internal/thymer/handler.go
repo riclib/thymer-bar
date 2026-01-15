@@ -43,18 +43,18 @@ func (c *Client) HandleIncoming(connID string, msgType string, data []byte) ([]b
 	case "register":
 		// Client registering itself
 		fmt.Printf("[Thymer] Client %s registered\n", connID)
-		return []byte(`{"status":"ok"}`), nil
+		return []byte(`{"type":"ack","status":"ok"}`), nil
 
 	case "tools":
 		// Client pushing available tools
 		fmt.Printf("[Thymer] Client %s pushed tools\n", connID)
 		// TODO: Store tools for MCP exposure
-		return []byte(`{"status":"ok"}`), nil
+		return []byte(`{"type":"ack","status":"ok"}`), nil
 
 	case "plugins":
 		// Client pushing available plugins
 		fmt.Printf("[Thymer] Client %s pushed plugins\n", connID)
-		return []byte(`{"status":"ok"}`), nil
+		return []byte(`{"type":"ack","status":"ok"}`), nil
 
 	default:
 		return nil, fmt.Errorf("unknown message type: %s", msgType)

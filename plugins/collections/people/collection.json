@@ -1,0 +1,215 @@
+{
+  "ver": 1,
+  "name": "People",
+  "icon": "ti-users",
+  "home": false,
+  "item_name": "Person",
+  "description": "Your network of contacts, colleagues, and connections",
+  "show_sidebar_items": true,
+  "show_cmdpal_items": true,
+  "page_field_ids": [
+    "relationship",
+    "company",
+    "role",
+    "email",
+    "last_contact"
+  ],
+  "fields": [
+    {
+      "id": "relationship",
+      "label": "Relationship",
+      "icon": "ti-heart",
+      "type": "choice",
+      "read_only": false,
+      "active": true,
+      "choices": [
+        {
+          "id": "contact",
+          "label": "Contact",
+          "color": "1",
+          "active": true
+        },
+        {
+          "id": "colleague",
+          "label": "Colleague",
+          "color": "6",
+          "active": true
+        },
+        {
+          "id": "friend",
+          "label": "Friend",
+          "color": "9",
+          "active": true
+        },
+        {
+          "id": "family",
+          "label": "Family",
+          "color": "3",
+          "active": true
+        },
+        {
+          "id": "mentor",
+          "label": "Mentor",
+          "color": "4",
+          "active": true
+        }
+      ]
+    },
+    {
+      "id": "company",
+      "label": "Company",
+      "icon": "ti-building",
+      "type": "text",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "role",
+      "label": "Role",
+      "icon": "ti-briefcase",
+      "type": "text",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "email",
+      "label": "Email",
+      "icon": "ti-mail",
+      "type": "text",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "phone",
+      "label": "Phone",
+      "icon": "ti-phone",
+      "type": "text",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "location",
+      "label": "Location",
+      "icon": "ti-map-pin",
+      "type": "text",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "linkedin",
+      "label": "LinkedIn",
+      "icon": "ti-brand-linkedin",
+      "type": "url",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "twitter",
+      "label": "Twitter",
+      "icon": "ti-brand-twitter",
+      "type": "url",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "github",
+      "label": "GitHub",
+      "icon": "ti-brand-github",
+      "type": "url",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "website",
+      "label": "Website",
+      "icon": "ti-world",
+      "type": "url",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "last_contact",
+      "label": "Last Contact",
+      "icon": "ti-clock",
+      "type": "datetime",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "birthday",
+      "label": "Birthday",
+      "icon": "ti-cake",
+      "type": "datetime",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "met_at",
+      "label": "Met At",
+      "icon": "ti-calendar-event",
+      "type": "text",
+      "read_only": false,
+      "active": true
+    },
+    {
+      "id": "tags",
+      "label": "Tags",
+      "icon": "ti-tags",
+      "type": "tags",
+      "read_only": false,
+      "active": true
+    }
+  ],
+  "views": [
+    {
+      "id": "VPPL001",
+      "label": "By Relationship",
+      "description": "People grouped by relationship type",
+      "icon": "ti-layout-board",
+      "type": "board",
+      "shown": true,
+      "read_only": false,
+      "field_ids": ["company", "role", "last_contact"],
+      "sort_field_id": "last_contact",
+      "sort_dir": "desc",
+      "group_by_field_id": "relationship",
+      "opts": {}
+    },
+    {
+      "id": "VPPL002",
+      "label": "By Company",
+      "description": "People grouped by company",
+      "icon": "ti-building",
+      "type": "table",
+      "shown": true,
+      "read_only": false,
+      "field_ids": ["relationship", "role", "email", "last_contact"],
+      "sort_field_id": "company",
+      "sort_dir": "asc",
+      "group_by_field_id": null,
+      "opts": {}
+    },
+    {
+      "id": "VPPL003",
+      "label": "Recent Contact",
+      "description": "People by last contact date",
+      "icon": "ti-clock",
+      "type": "table",
+      "shown": true,
+      "read_only": false,
+      "field_ids": ["relationship", "company", "email", "last_contact"],
+      "sort_field_id": "last_contact",
+      "sort_dir": "desc",
+      "group_by_field_id": null,
+      "opts": {}
+    }
+  ],
+  "sidebar_record_sort_dir": "asc",
+  "sidebar_record_sort_field_id": null,
+  "managed": {
+    "fields": true,
+    "views": true,
+    "sidebar": true
+  },
+  "custom": {}
+}
