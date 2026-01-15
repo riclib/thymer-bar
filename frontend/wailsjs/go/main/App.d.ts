@@ -48,6 +48,10 @@ export function InstallPlugin(arg1:string):Promise<void>;
 
 export function RefreshPluginList():Promise<string>;
 
+export function RerenderAll():Promise<void>;
+
+export function ResyncAll():Promise<void>;
+
 export function SetDevMode(arg1:boolean):Promise<void>;
 
 export function SetGitHubConfig(arg1:boolean,arg2:Array<string>):Promise<void>;

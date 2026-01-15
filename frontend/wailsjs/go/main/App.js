@@ -94,6 +94,14 @@ export function RefreshPluginList() {
   return window['go']['main']['App']['RefreshPluginList']();
 }
 
+export function RerenderAll() {
+  return window['go']['main']['App']['RerenderAll']();
+}
+
+export function ResyncAll() {
+  return window['go']['main']['App']['ResyncAll']();
+}
+
 export function SetDevMode(arg1) {
   return window['go']['main']['App']['SetDevMode'](arg1);
 }

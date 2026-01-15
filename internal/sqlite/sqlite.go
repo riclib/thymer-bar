@@ -65,6 +65,12 @@ func New(cfg Config) (*DB, error) {
 		return nil, fmt.Errorf("failed to migrate: %w", err)
 	}
 
+	// Run Bits schema migration
+	if err := d.migrateBits(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to migrate bits schema: %w", err)
+	}
+
 	return d, nil
 }
 

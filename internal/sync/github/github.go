@@ -11,11 +11,15 @@ import (
 	"github.com/google/go-github/v66/github"
 	"golang.org/x/oauth2"
 
+	"thymer-bar/internal/bit"
 	"thymer-bar/internal/sync"
 )
 
 // SyncVersion tracks schema version - increment to force full resync
 const SyncVersion = 1
+
+// BitCallback is called for each fetched bit.
+type BitCallback func(ctx context.Context, b *bit.Bit) error
 
 // Engine syncs GitHub issues and PRs.
 type Engine struct {
@@ -25,8 +29,8 @@ type Engine struct {
 	enabled bool
 	log     *slog.Logger
 
-	// Callback for publishing records
-	onRecord func(ctx context.Context, record *sync.Record) error
+	// Callback for publishing bits
+	onBit BitCallback
 }
 
 // Config holds GitHub sync configuration.
@@ -44,11 +48,11 @@ type SyncStats struct {
 	Errors    []error
 }
 
-// New creates a new GitHub sync engine.
-func New(onRecord func(ctx context.Context, record *sync.Record) error) *Engine {
+// New creates a new GitHub sync engine with Bit callback.
+func New(onBit BitCallback) *Engine {
 	return &Engine{
-		onRecord: onRecord,
-		log:      slog.Default(),
+		onBit: onBit,
+		log:   slog.Default(),
 	}
 }
 
@@ -82,7 +86,6 @@ func (e *Engine) Configure(cfg map[string]any) error {
 }
 
 // Sync fetches all issues and PRs from configured repos.
-// If since is provided, only items updated after that time are fetched.
 func (e *Engine) Sync(ctx context.Context) error {
 	return e.SyncSince(ctx, nil)
 }
@@ -156,11 +159,11 @@ func (e *Engine) syncRepo(ctx context.Context, repo string, since *time.Time) (*
 				continue
 			}
 
-			record := e.issueToRecord(repo, issue)
+			b := e.issueToBit(repo, owner, name, issue)
 			stats.Fetched++
 
-			if e.onRecord != nil {
-				if err := e.onRecord(ctx, record); err != nil {
+			if e.onBit != nil {
+				if err := e.onBit(ctx, b); err != nil {
 					stats.Errors = append(stats.Errors, err)
 				}
 			}
@@ -199,11 +202,11 @@ func (e *Engine) syncRepo(ctx context.Context, repo string, since *time.Time) (*
 				continue
 			}
 
-			record := e.prToRecord(repo, pr)
+			b := e.prToBit(repo, owner, name, pr)
 			stats.Fetched++
 
-			if e.onRecord != nil {
-				if err := e.onRecord(ctx, record); err != nil {
+			if e.onBit != nil {
+				if err := e.onBit(ctx, b); err != nil {
 					stats.Errors = append(stats.Errors, err)
 				}
 			}
@@ -219,143 +222,120 @@ func (e *Engine) syncRepo(ctx context.Context, repo string, since *time.Time) (*
 	return stats, nil
 }
 
-func (e *Engine) issueToRecord(repo string, issue *github.Issue) *sync.Record {
-	// ID format: github_{owner}_{repo}_{number}
-	repoSlug := strings.ReplaceAll(repo, "/", "_")
-	externalID := fmt.Sprintf("github_%s_%d", repoSlug, issue.GetNumber())
+// issueToBit converts a GitHub issue to a Bit.
+func (e *Engine) issueToBit(repo, owner, name string, issue *github.Issue) *bit.Bit {
+	// Build canonical URI
+	masterURI := bit.BuildGitHubURI(owner, name, issue.GetNumber(), "issues")
 
+	// Extract labels
 	labels := make([]string, 0, len(issue.Labels))
 	for _, l := range issue.Labels {
 		labels = append(labels, l.GetName())
 	}
 
+	// Extract assignees
 	assignees := make([]string, 0, len(issue.Assignees))
 	for _, a := range issue.Assignees {
 		assignees = append(assignees, a.GetLogin())
 	}
 
-	// Build rich markdown content
+	// Build markdown content (the issue body)
 	var content strings.Builder
-	content.WriteString(fmt.Sprintf("# #%d %s\n\n", issue.GetNumber(), issue.GetTitle()))
-	content.WriteString(fmt.Sprintf("**State:** %s", issue.GetState()))
-	if issue.GetUser() != nil {
-		content.WriteString(fmt.Sprintf(" | **Author:** %s", issue.GetUser().GetLogin()))
-	}
-	if len(labels) > 0 {
-		content.WriteString(fmt.Sprintf(" | **Labels:** %s", strings.Join(labels, ", ")))
-	}
-	content.WriteString("\n\n")
 	if body := strings.TrimSpace(issue.GetBody()); body != "" {
 		content.WriteString(body)
-		content.WriteString("\n\n")
 	}
-	content.WriteString(fmt.Sprintf("[View on GitHub](%s)", issue.GetHTMLURL()))
 
-	// Determine completion state
-	var completedAt *time.Time
+	// Create the Bit
+	b := bit.New(masterURI, bit.SystemGitHub)
+	b.Content = content.String()
+	b.CreatedAt = issue.GetCreatedAt().Time
+	b.UpdatedAt = issue.GetUpdatedAt().Time
+
+	// Set frontmatter (duck-typed fields)
+	b.Set("title", issue.GetTitle())
+	b.Set("repo", repo)
+	b.Set("number", issue.GetNumber())
+	b.Set("state", issue.GetState())
+	b.Set("type", "issue")
+	b.Set("url", issue.GetHTMLURL())
+	b.Set("labels", labels)
+	b.Set("author", issue.GetUser().GetLogin())
+	b.Set("assignees", assignees)
+	b.Set("comments", issue.GetComments())
+
+	// Track completion
 	if issue.GetState() == "closed" && issue.ClosedAt != nil {
-		t := issue.ClosedAt.Time
-		completedAt = &t
+		b.Set("completed_at", issue.ClosedAt.Time)
 	}
 
-	return &sync.Record{
-		Source:      "github",
-		ExternalID:  externalID,
-		Type:        "issue",
-		Title:       issue.GetTitle(),
-		Content:     content.String(),
-		URL:         issue.GetHTMLURL(),
-		CompletedAt: completedAt,
-		Fields: map[string]any{
-			"repo":      repo,
-			"number":    issue.GetNumber(),
-			"state":     issue.GetState(),
-			"type":      "issue",
-			"labels":    labels,
-			"author":    issue.GetUser().GetLogin(),
-			"assignees": assignees,
-			"comments":  issue.GetComments(),
-		},
-		CreatedAt: issue.GetCreatedAt().Time,
-		UpdatedAt: issue.GetUpdatedAt().Time,
-	}
+	// Compute hash for change detection
+	b.UpdateHash()
+
+	return b
 }
 
-func (e *Engine) prToRecord(repo string, pr *github.PullRequest) *sync.Record {
-	// ID format: github_{owner}_{repo}_{number}
-	repoSlug := strings.ReplaceAll(repo, "/", "_")
-	externalID := fmt.Sprintf("github_%s_%d", repoSlug, pr.GetNumber())
+// prToBit converts a GitHub PR to a Bit.
+func (e *Engine) prToBit(repo, owner, name string, pr *github.PullRequest) *bit.Bit {
+	// Build canonical URI
+	masterURI := bit.BuildGitHubURI(owner, name, pr.GetNumber(), "pulls")
 
+	// Extract labels
 	labels := make([]string, 0, len(pr.Labels))
 	for _, l := range pr.Labels {
 		labels = append(labels, l.GetName())
 	}
 
+	// Extract assignees
 	assignees := make([]string, 0, len(pr.Assignees))
 	for _, a := range pr.Assignees {
 		assignees = append(assignees, a.GetLogin())
 	}
 
-	// Build rich markdown content
+	// Build markdown content (the PR body)
 	var content strings.Builder
-	content.WriteString(fmt.Sprintf("# PR #%d %s\n\n", pr.GetNumber(), pr.GetTitle()))
-	content.WriteString(fmt.Sprintf("**State:** %s", pr.GetState()))
-	if pr.GetMerged() {
-		content.WriteString(" (merged)")
-	}
-	if pr.GetUser() != nil {
-		content.WriteString(fmt.Sprintf(" | **Author:** %s", pr.GetUser().GetLogin()))
-	}
-	if len(labels) > 0 {
-		content.WriteString(fmt.Sprintf(" | **Labels:** %s", strings.Join(labels, ", ")))
-	}
-	if pr.Additions != nil && pr.Deletions != nil {
-		content.WriteString(fmt.Sprintf(" | **Changes:** +%d/-%d", pr.GetAdditions(), pr.GetDeletions()))
-	}
-	content.WriteString("\n\n")
 	if body := strings.TrimSpace(pr.GetBody()); body != "" {
 		content.WriteString(body)
-		content.WriteString("\n\n")
 	}
-	content.WriteString(fmt.Sprintf("[View on GitHub](%s)", pr.GetHTMLURL()))
 
-	// Determine completion state
-	var completedAt *time.Time
+	// Determine state
 	state := pr.GetState()
-	if pr.GetMerged() && pr.MergedAt != nil {
-		t := pr.MergedAt.Time
-		completedAt = &t
+	if pr.GetMerged() {
 		state = "merged"
-	} else if pr.GetState() == "closed" && pr.ClosedAt != nil {
-		t := pr.ClosedAt.Time
-		completedAt = &t
 	}
 
-	return &sync.Record{
-		Source:      "github",
-		ExternalID:  externalID,
-		Type:        "pr",
-		Title:       pr.GetTitle(),
-		Content:     content.String(),
-		URL:         pr.GetHTMLURL(),
-		CompletedAt: completedAt,
-		Fields: map[string]any{
-			"repo":          repo,
-			"number":        pr.GetNumber(),
-			"state":         state,
-			"type":          "pull_request",
-			"labels":        labels,
-			"author":        pr.GetUser().GetLogin(),
-			"assignees":     assignees,
-			"comments":      pr.GetComments(),
-			"merged":        pr.GetMerged(),
-			"additions":     pr.GetAdditions(),
-			"deletions":     pr.GetDeletions(),
-			"changed_files": pr.GetChangedFiles(),
-		},
-		CreatedAt: pr.GetCreatedAt().Time,
-		UpdatedAt: pr.GetUpdatedAt().Time,
+	// Create the Bit
+	b := bit.New(masterURI, bit.SystemGitHub)
+	b.Content = content.String()
+	b.CreatedAt = pr.GetCreatedAt().Time
+	b.UpdatedAt = pr.GetUpdatedAt().Time
+
+	// Set frontmatter (duck-typed fields)
+	b.Set("title", pr.GetTitle())
+	b.Set("repo", repo)
+	b.Set("number", pr.GetNumber())
+	b.Set("state", state)
+	b.Set("type", "pr")
+	b.Set("url", pr.GetHTMLURL())
+	b.Set("labels", labels)
+	b.Set("author", pr.GetUser().GetLogin())
+	b.Set("assignees", assignees)
+	b.Set("comments", pr.GetComments())
+	b.Set("merged", pr.GetMerged())
+	b.Set("additions", pr.GetAdditions())
+	b.Set("deletions", pr.GetDeletions())
+	b.Set("changed_files", pr.GetChangedFiles())
+
+	// Track completion
+	if pr.GetMerged() && pr.MergedAt != nil {
+		b.Set("completed_at", pr.MergedAt.Time)
+	} else if pr.GetState() == "closed" && pr.ClosedAt != nil {
+		b.Set("completed_at", pr.ClosedAt.Time)
 	}
+
+	// Compute hash for change detection
+	b.UpdateHash()
+
+	return b
 }
 
 // parseRepo splits "owner/repo" into components
@@ -407,3 +387,6 @@ func (e *Engine) ValidateToken(ctx context.Context) error {
 	}
 	return nil
 }
+
+// Legacy support: sync.Engine interface compatibility
+var _ sync.Engine = (*Engine)(nil)

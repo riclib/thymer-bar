@@ -10,6 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"thymer-bar/internal/bit"
 	"thymer-bar/internal/sync"
 )
 
@@ -60,6 +61,63 @@ func (p *Projector) WriteRecord(record *sync.Record) error {
 	}
 
 	return nil
+}
+
+// WriteBit writes a Bit as a markdown file.
+// Files are organized by type: Issues/, PRs/, etc.
+func (p *Projector) WriteBit(b *bit.Bit) error {
+	// Determine folder based on type
+	bitType := b.GetString("type")
+	folder := typeToFolder(bitType)
+	dir := filepath.Join(p.baseDir, folder)
+
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	// Filename from master_uri
+	filename := sanitizeFilename(b.MasterURI) + ".md"
+	path := filepath.Join(dir, filename)
+
+	// Build frontmatter from bit
+	fm := buildFrontmatterFromBit(b)
+
+	// Marshal frontmatter to YAML
+	fmBytes, err := yaml.Marshal(fm)
+	if err != nil {
+		return fmt.Errorf("failed to marshal frontmatter: %w", err)
+	}
+
+	// Build full content
+	var content strings.Builder
+	content.WriteString("---\n")
+	content.Write(fmBytes)
+	content.WriteString("---\n\n")
+	content.WriteString(b.Content)
+
+	// Write file
+	if err := os.WriteFile(path, []byte(content.String()), 0644); err != nil {
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+
+	return nil
+}
+
+// buildFrontmatterFromBit creates frontmatter map from a Bit.
+func buildFrontmatterFromBit(b *bit.Bit) map[string]any {
+	fm := map[string]any{
+		"master_uri":    b.MasterURI,
+		"master_system": b.MasterSystem,
+		"created":       b.CreatedAt.Format(time.RFC3339),
+		"updated":       b.UpdatedAt.Format(time.RFC3339),
+	}
+
+	// Copy all frontmatter fields
+	for k, v := range b.Frontmatter {
+		fm[k] = v
+	}
+
+	return fm
 }
 
 // buildFrontmatter creates frontmatter map from record.

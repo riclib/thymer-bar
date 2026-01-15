@@ -3,8 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -18,10 +16,10 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"thymer-bar/internal/bit"
 	"thymer-bar/internal/config"
 	"thymer-bar/internal/secrets"
 	"thymer-bar/internal/sqlite"
-	isync "thymer-bar/internal/sync"
 	"thymer-bar/internal/sync/github"
 	"thymer-bar/internal/ui"
 )
@@ -228,7 +226,7 @@ func (a *App) SyncNow(id string) error {
 	}
 }
 
-// syncGitHub runs the GitHub sync through the event pipeline.
+// syncGitHub runs the GitHub sync through the Bits pipeline.
 func (a *App) syncGitHub() error {
 	token, err := secrets.Get(secrets.GitHubToken)
 	if err != nil || token == "" {
@@ -260,8 +258,8 @@ func (a *App) syncGitHub() error {
 	// Get last sync time for incremental fetch
 	var since *time.Time
 	if a.db != nil {
-		if state, err := a.db.GetSyncState(context.Background(), "github"); err == nil && state.LastSourceUpdatedAt != nil {
-			since = state.LastSourceUpdatedAt
+		if cursor, err := a.db.GetSyncCursorForSystem(context.Background(), "github"); err == nil && cursor.LastSourceUpdatedAt != nil {
+			since = cursor.LastSourceUpdatedAt
 			slog.Info("incremental sync", "since", since.Format(time.RFC3339))
 		} else {
 			slog.Info("full sync", "reason", "no previous sync state")
@@ -270,35 +268,35 @@ func (a *App) syncGitHub() error {
 
 	var maxSourceUpdatedAt time.Time
 
-	// Create callback that processes through the pipeline
-	onRecord := func(ctx context.Context, record *isync.Record) error {
+	// Create callback that processes Bits through the pipeline
+	onBit := func(ctx context.Context, b *bit.Bit) error {
 		progress.processed++
 		progress.phase = "fetching"
 		a.emitSyncProgress(progress)
 
 		// Track latest source timestamp for next incremental sync
-		if record.UpdatedAt.After(maxSourceUpdatedAt) {
-			maxSourceUpdatedAt = record.UpdatedAt
+		if b.UpdatedAt.After(maxSourceUpdatedAt) {
+			maxSourceUpdatedAt = b.UpdatedAt
 		}
 
-		// Process through pipeline: map -> hash -> change detection -> render
-		slog.Debug("processing record", "num", progress.processed, "title", record.Title, "id", record.ExternalID)
-		changed, err := a.processRecordPipeline(ctx, record)
+		// Process through pipeline: hash check -> store -> render
+		slog.Debug("processing bit", "num", progress.processed, "title", b.Title(), "uri", b.MasterURI)
+		changed, err := a.processBitPipeline(ctx, b)
 		if err != nil {
 			progress.errors++
-			slog.Error("failed to process record", "id", record.ExternalID, "error", err)
-			return nil // Continue with other records
+			slog.Error("failed to process bit", "uri", b.MasterURI, "error", err)
+			return nil // Continue with other bits
 		}
 
 		if changed == "created" {
 			progress.created++
-			slog.Info("record created", "title", record.Title)
+			slog.Info("bit created", "title", b.Title())
 		} else if changed == "updated" {
 			progress.updated++
-			slog.Info("record updated", "title", record.Title)
+			slog.Info("bit updated", "title", b.Title())
 		} else {
 			progress.unchanged++
-			slog.Debug("record unchanged", "title", record.Title)
+			slog.Debug("bit unchanged", "title", b.Title())
 		}
 
 		a.emitSyncProgress(progress)
@@ -306,7 +304,7 @@ func (a *App) syncGitHub() error {
 	}
 
 	// Create and configure the GitHub engine
-	engine := github.New(onRecord)
+	engine := github.New(onBit)
 	reposAny := make([]any, len(repos))
 	for i, r := range repos {
 		reposAny[i] = r
@@ -331,10 +329,10 @@ func (a *App) syncGitHub() error {
 		syncErr = engine.Sync(ctx)
 	}
 
-	// Update sync state with latest source timestamp
+	// Update sync cursor with latest source timestamp
 	if a.db != nil && !maxSourceUpdatedAt.IsZero() {
-		a.db.UpdateSyncState(ctx, &sqlite.SyncState{
-			Source:              "github",
+		a.db.UpdateSyncCursor(ctx, &sqlite.SyncCursor{
+			System:              "github",
 			LastSourceUpdatedAt: &maxSourceUpdatedAt,
 		})
 	}
@@ -420,197 +418,102 @@ func (a *App) emitSyncProgress(p *syncProgress) {
 	}
 }
 
-// processRecordPipeline processes a record through the sync pipeline.
+// processBitPipeline processes a Bit through the sync pipeline.
 // Returns "created", "updated", or "" (unchanged).
-func (a *App) processRecordPipeline(ctx context.Context, record *isync.Record) (string, error) {
-	// Map to normalized format
-	mapped := a.mapGitHubRecord(record)
-
-	// Compute content hash of mapped record
-	newHash := computeMappedHash(mapped)
-
-	// Check for changes via SQLite
-	var oldHash string
+func (a *App) processBitPipeline(ctx context.Context, b *bit.Bit) (string, error) {
+	// Check for existing Bit by master_uri
+	var existing *bit.Bit
 	if a.db != nil {
-		oldHash, _ = a.db.GetSourceRecordHash(ctx, record.Source, record.ExternalID)
+		existing, _ = a.db.GetBitByURI(ctx, b.MasterURI)
 	}
 
+	// Determine change type
 	changeType := ""
-	if oldHash == "" {
+	if existing == nil {
 		changeType = "created"
-	} else if oldHash != newHash {
+	} else if existing.Hash != b.Hash {
 		changeType = "updated"
 	} else {
 		// No change
 		return "", nil
 	}
 
-	// Sync to Thymer (single upsert call)
-	thymerUUID, err := a.renderToThymer(ctx, mapped, changeType)
-	if err != nil {
-		return changeType, err
+	// Store the Bit
+	if a.db != nil {
+		if err := a.db.UpsertBit(ctx, b); err != nil {
+			return changeType, fmt.Errorf("failed to store bit: %w", err)
+		}
 	}
 
-	// Store hash and UUID in SQLite
-	if a.db != nil {
-		// Update source_records for change detection
-		a.db.UpsertSourceRecord(ctx, &sqlite.SourceRecord{
-			Source:          record.Source,
-			ExternalID:      record.ExternalID,
-			ContentHash:     newHash,
-			SourceUpdatedAt: &record.UpdatedAt,
-		})
-
-		// Update records table with thymer UUID for future reference
-		now := time.Now()
-		a.db.UpsertRecord(ctx, &sqlite.Record{
-			ID:          fmt.Sprintf("%s_%s", record.Source, record.ExternalID),
-			Source:      record.Source,
-			ExternalID:  record.ExternalID,
-			ThymerUUID:  thymerUUID,
-			ContentHash: newHash,
-			SyncedAt:    &now,
-		})
+	// Render to Thymer if available
+	if a.thymer != nil && a.thymer.Available() && b.CanSyncToThymer() {
+		ref, err := a.renderBitToThymer(ctx, b, changeType)
+		if err != nil {
+			slog.Warn("failed to render to thymer", "uri", b.MasterURI, "error", err)
+			// Don't fail the pipeline - bit is stored, thymer can be synced later
+		} else if ref != nil && a.db != nil {
+			a.db.UpsertRef(ctx, ref)
+		}
 	}
 
 	return changeType, nil
 }
 
-// mappedRecord is the normalized record format.
-type mappedRecord struct {
-	Source        string
-	ExternalID    string
-	Collection    string
-	Title         string
-	Content       string // Markdown body content
-	ExternalState string
-	Type          string
-	URL           string
-	Repo          string
-	Number        int
-	Author        string
-	Assignee      string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	Labels        []string
-}
-
-// mapGitHubRecord converts a sync.Record to our normalized format.
-// Uses Labels (not IDs) for choice fields to match Thymer's API.
-func (a *App) mapGitHubRecord(record *isync.Record) *mappedRecord {
-	mapped := &mappedRecord{
-		Source:     "GitHub", // Label, not ID
-		ExternalID: record.ExternalID,
-		Collection: "Issues",
-		Title:      record.Title,
-		Content:    record.Content, // Markdown body
-		URL:        record.URL,
-		CreatedAt:  record.CreatedAt,
-		UpdatedAt:  record.UpdatedAt,
-	}
-
-	// External state - use Labels
-	mapped.ExternalState = "Open"
-	if record.CompletedAt != nil {
-		mapped.ExternalState = "Closed"
-	}
-	if state, ok := record.Fields["state"].(string); ok {
-		if state == "closed" || state == "merged" {
-			mapped.ExternalState = "Closed"
-		}
-	}
-
-	// Type - use Labels
-	if t, ok := record.Fields["type"].(string); ok {
-		switch t {
-		case "pull_request":
-			mapped.Type = "PR"
-		case "issue":
-			mapped.Type = "Issue"
-		default:
-			mapped.Type = "Issue"
-		}
-	} else {
-		mapped.Type = "Issue"
-	}
-
-	// Repo
-	if repo, ok := record.Fields["repo"].(string); ok {
-		mapped.Repo = repo
-	}
-
-	// Number
-	if num, ok := record.Fields["number"].(int); ok {
-		mapped.Number = num
-	}
-
-	// Author
-	if author, ok := record.Fields["author"].(string); ok {
-		mapped.Author = author
-	}
-
-	// Assignee
-	if assignees, ok := record.Fields["assignees"].([]string); ok && len(assignees) > 0 {
-		mapped.Assignee = assignees[0]
-	}
-
-	// Labels
-	if labels, ok := record.Fields["labels"].([]string); ok {
-		mapped.Labels = labels
-	}
-
-	return mapped
-}
-
-// computeMappedHash computes a content hash from the mapped record.
-func computeMappedHash(m *mappedRecord) string {
-	parts := []string{
-		m.Title,
-		m.Content, // Include body content in hash
-		m.ExternalState,
-		m.Type,
-		m.Repo,
-		fmt.Sprintf("%d", m.Number),
-		m.Author,
-		m.Assignee,
-		m.URL,
-	}
-	if len(m.Labels) > 0 {
-		parts = append(parts, strings.Join(m.Labels, ","))
-	}
-	h := sha256.Sum256([]byte(strings.Join(parts, "|")))
-	return hex.EncodeToString(h[:16])
-}
-
-// renderToThymer syncs a mapped record to Thymer using the upsert-based SyncRecord.
-// Returns the Thymer UUID for storage.
-func (a *App) renderToThymer(ctx context.Context, m *mappedRecord, changeType string) (string, error) {
+// renderBitToThymer syncs a Bit to Thymer using the upsert-based SyncRecord.
+// Returns the Ref for storage.
+func (a *App) renderBitToThymer(ctx context.Context, b *bit.Bit, changeType string) (*bit.Ref, error) {
 	if a.thymer == nil || !a.thymer.Available() {
-		slog.Warn("thymer not connected", "id", m.ExternalID)
-		return "", fmt.Errorf("thymer not connected")
+		return nil, fmt.Errorf("thymer not connected")
 	}
 
-	slog.Debug("syncing to thymer", "id", m.ExternalID, "collection", m.Collection, "change", changeType)
+	// Determine collection from Bit type
+	collection := a.collectionFromBit(b)
+
+	// Map external state for Thymer
+	externalState := "Open"
+	if state := b.GetString("state"); state == "closed" || state == "merged" {
+		externalState = "Closed"
+	}
+	if b.IsCompleted() {
+		externalState = "Closed"
+	}
+
+	// Map type for Thymer
+	bitType := b.GetString("type")
+	thymerType := "Issue"
+	if bitType == "pr" || bitType == "pull_request" {
+		thymerType = "PR"
+	}
+
+	// Get first assignee
+	assignee := ""
+	if assignees := b.GetStrings("assignees"); len(assignees) > 0 {
+		assignee = assignees[0]
+	}
+
+	slog.Debug("syncing to thymer", "uri", b.MasterURI, "collection", collection, "change", changeType)
+
+	// Format markdown content for better readability
+	formattedContent := ensureBlankLinesBeforeHeadings(b.Content)
 
 	fields := map[string]any{
-		"title":          m.Title,
-		"source":         m.Source,
-		"external_state": m.ExternalState,
-		"type":           m.Type,
-		"url":            m.URL,
-		"repo":           m.Repo,
-		"number":         m.Number,
-		"author":         m.Author,
-		"assignee":       m.Assignee,
-		"updated_at":     m.UpdatedAt,
-		"created_at":     m.CreatedAt,
-		"content":        m.Content, // Markdown body for insertion
+		"title":          b.Title(),
+		"source":         "GitHub", // Label for Thymer
+		"external_state": externalState,
+		"type":           thymerType,
+		"url":            b.GetString("url"),
+		"repo":           b.GetString("repo"),
+		"number":         b.GetInt("number"),
+		"author":         b.GetString("author"),
+		"assignee":       assignee,
+		"updated_at":     b.UpdatedAt,
+		"created_at":     b.CreatedAt,
+		"content":        formattedContent,
 	}
 
 	// Set initial status for new records based on external state
-	// Use Labels (not IDs) for choice fields
 	if changeType == "created" {
-		if m.ExternalState == "Closed" {
+		if externalState == "Closed" {
 			fields["status"] = "Done"
 		} else {
 			fields["status"] = "Inbox"
@@ -618,15 +521,61 @@ func (a *App) renderToThymer(ctx context.Context, m *mappedRecord, changeType st
 	}
 
 	// SyncRecord handles the upsert - Thymer decides if it's create or update
-	slog.Debug("sending syncRecord request", "collection", m.Collection, "external_id", m.ExternalID)
-	result, err := a.thymer.SyncRecord(ctx, m.Collection, m.ExternalID, m.Title, fields)
+	// Use master_uri as the external_id for unique identification
+	result, err := a.thymer.SyncRecord(ctx, collection, b.MasterURI, b.Title(), fields)
 	if err != nil {
 		slog.Error("syncRecord failed", "error", err)
-		return "", err
+		return nil, err
 	}
 
 	slog.Info("syncRecord success", "guid", result.GUID, "action", result.Action)
-	return result.GUID, nil
+
+	// Create ref with bidirectional hash tracking
+	ref := bit.NewRef(b.MasterURI, bit.SystemThymer, result.GUID)
+	ref.MarkPushed(b.Hash)
+
+	return ref, nil
+}
+
+// collectionFromBit determines the Thymer collection for a Bit.
+func (a *App) collectionFromBit(b *bit.Bit) string {
+	// Duck typing: check frontmatter fields
+	if b.HasField("repo") && b.HasField("number") {
+		return "Issues"
+	}
+	// Default to Notes
+	return "Notes"
+}
+
+// ensureBlankLinesBeforeHeadings adds a blank line before markdown headings
+// (lines starting with #, ##, ###, etc.) unless they're at the start or
+// already preceded by a blank line. This helps Thymer's markdown parser
+// properly recognize headings as separate blocks.
+func ensureBlankLinesBeforeHeadings(content string) string {
+	if content == "" {
+		return content
+	}
+
+	lines := strings.Split(content, "\n")
+	var result []string
+
+	for i, line := range lines {
+		// Check if this line is a heading (starts with #)
+		trimmed := strings.TrimLeft(line, " \t")
+		isHeading := strings.HasPrefix(trimmed, "#")
+
+		// If it's a heading and not the first line, ensure blank line before
+		if isHeading && i > 0 {
+			// Check if we already have a blank line
+			if len(result) > 0 && strings.TrimSpace(result[len(result)-1]) != "" {
+				result = append(result, "")
+			}
+		}
+
+		result = append(result, line)
+	}
+
+	return strings.Join(result, "\n")
 }
 
 // SyncAll triggers sync for all enabled sources.
@@ -639,6 +588,101 @@ func (a *App) SyncAll() error {
 			}
 		}
 	}
+	return nil
+}
+
+// ResyncAll clears all data and performs a full sync from all sources.
+// This clears bits, refs, and sync_cursors, then fetches everything fresh.
+func (a *App) ResyncAll() error {
+	ctx := context.Background()
+
+	slog.Info("resync all: clearing database")
+
+	// Clear all tables
+	if a.db != nil {
+		if err := a.db.ClearAllForResync(ctx); err != nil {
+			return fmt.Errorf("failed to clear database: %w", err)
+		}
+	}
+
+	slog.Info("resync all: starting fresh sync")
+
+	// Trigger full sync
+	return a.SyncAll()
+}
+
+// RerenderAll clears refs and re-renders all existing bits to Thymer.
+// This doesn't fetch from sources - it just pushes existing bits to Thymer.
+func (a *App) RerenderAll() error {
+	ctx := context.Background()
+
+	if a.db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+
+	if a.thymer == nil || !a.thymer.Available() {
+		return fmt.Errorf("thymer not connected")
+	}
+
+	// Get count before clearing
+	bitCount, err := a.db.CountBits(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to count bits: %w", err)
+	}
+
+	slog.Info("rerender all: clearing refs", "bit_count", bitCount)
+
+	// Clear all refs (but keep bits and cursors)
+	if err := a.db.ClearAllRefs(ctx); err != nil {
+		return fmt.Errorf("failed to clear refs: %w", err)
+	}
+
+	// Get all bits
+	bits, err := a.db.GetAllBits(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get bits: %w", err)
+	}
+
+	slog.Info("rerender all: rendering bits to thymer", "count", len(bits))
+
+	// Progress tracking
+	progress := &syncProgress{
+		source: "rerender",
+		phase:  "rendering",
+	}
+	a.emitSyncProgress(progress)
+
+	// Render each bit to Thymer
+	var errors int
+	for i, b := range bits {
+		if !b.CanSyncToThymer() {
+			continue
+		}
+
+		progress.processed = i + 1
+		a.emitSyncProgress(progress)
+
+		ref, err := a.renderBitToThymer(ctx, b, "created")
+		if err != nil {
+			slog.Warn("failed to render bit", "uri", b.MasterURI, "error", err)
+			errors++
+			continue
+		}
+
+		if ref != nil {
+			if err := a.db.UpsertRef(ctx, ref); err != nil {
+				slog.Warn("failed to save ref", "uri", b.MasterURI, "error", err)
+			}
+		}
+		progress.created++
+	}
+
+	progress.phase = "complete"
+	progress.errors = errors
+	a.emitSyncProgress(progress)
+
+	slog.Info("rerender all: complete", "rendered", progress.created, "errors", errors)
+
 	return nil
 }
 

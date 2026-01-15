@@ -18,6 +18,8 @@ import {
     SetSourceEnabled,
     SyncNow,
     SyncAll,
+    ResyncAll,
+    RerenderAll,
     GetGitHubConfigHTML,
     SetGitHubRepos,
     GetGoogleCalendarConfigHTML,
@@ -217,6 +219,12 @@ function bindEvents() {
                 break;
             case 'sync-all':
                 await handleSyncAll(target);
+                break;
+            case 'resync-all':
+                await handleResyncAll(target);
+                break;
+            case 'rerender-all':
+                await handleRerenderAll(target);
                 break;
             case 'configure':
                 await handleConfigure(sourceId);
@@ -520,6 +528,53 @@ async function handleSyncAll(btn) {
         await init(); // Refresh view
     } catch (err) {
         showToast(`Sync failed: ${err}`, 'error');
+    }
+
+    btn.disabled = false;
+    if (btn.querySelector('span')) {
+        btn.querySelector('span').textContent = originalText;
+    }
+}
+
+async function handleResyncAll(btn) {
+    // Confirm before clearing all data
+    if (!confirm('This will clear all synced data and fetch everything fresh from sources. Continue?')) {
+        return;
+    }
+
+    btn.disabled = true;
+    const originalText = btn.querySelector('span')?.textContent || 'Full Resync';
+    if (btn.querySelector('span')) {
+        btn.querySelector('span').textContent = 'Clearing & Syncing...';
+    }
+
+    try {
+        await ResyncAll();
+        showToast('Full resync complete', 'success');
+        await init(); // Refresh view
+    } catch (err) {
+        showToast(`Resync failed: ${err}`, 'error');
+    }
+
+    btn.disabled = false;
+    if (btn.querySelector('span')) {
+        btn.querySelector('span').textContent = originalText;
+    }
+}
+
+async function handleRerenderAll(btn) {
+    btn.disabled = true;
+    const originalText = btn.querySelector('span')?.textContent || 'Rerender All';
+    if (btn.querySelector('span')) {
+        btn.querySelector('span').textContent = 'Rendering...';
+    }
+
+    try {
+        await RerenderAll();
+        showToast('All items re-rendered to Thymer', 'success');
+        await init(); // Refresh view
+    } catch (err) {
+        showToast(`Rerender failed: ${err}`, 'error');
     }
 
     btn.disabled = false;

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"thymer-bar/internal/bit"
 	"thymer-bar/internal/config"
 	"thymer-bar/internal/mcp"
 	internalnats "thymer-bar/internal/nats"
@@ -200,10 +201,10 @@ func (a *App) initThymer() {
 }
 
 func (a *App) initSyncEngines() {
-	// Callback for processing records from sync engines
-	onRecord := func(ctx context.Context, record *sync.Record) error {
+	// Callback for processing Bits from sync engines
+	onBit := func(ctx context.Context, b *bit.Bit) error {
 		// TODO: Publish to NATS and sync to Thymer
-		fmt.Printf("[%s] Record: %s\n", record.Source, record.Title)
+		fmt.Printf("[%s] Bit: %s\n", b.MasterSystem, b.Title())
 		return nil
 	}
 
@@ -211,7 +212,7 @@ func (a *App) initSyncEngines() {
 	cfg, _ := config.Load()
 
 	// Register GitHub polling engine
-	githubEngine := github.New(onRecord)
+	githubEngine := github.New(onBit)
 	token, _ := secrets.Get(secrets.GitHubToken)
 	githubEngine.Configure(map[string]any{
 		"token":   token,
@@ -248,12 +249,12 @@ func (a *App) initHTTPServer() {
 	}, a.log)
 
 	// Register webhook handlers
-	onRecord := func(ctx context.Context, record *sync.Record) error {
-		fmt.Printf("[webhook:%s] Record: %s\n", record.Source, record.Title)
+	onBitWebhook := func(ctx context.Context, b *bit.Bit) error {
+		fmt.Printf("[webhook:%s] Bit: %s\n", b.MasterSystem, b.Title())
 		// TODO: Publish to NATS
 		return nil
 	}
-	a.webhook.Register(github.NewWebhookHandler(onRecord))
+	a.webhook.Register(github.NewWebhookHandler(onBitWebhook))
 
 	// Mount handlers
 	mux.HandleFunc("/ws", a.thymer.Handler(a.log))

@@ -8,10 +8,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"thymer-bar/internal/bit"
 	"thymer-bar/internal/config"
 	"thymer-bar/internal/markdown"
 	"thymer-bar/internal/secrets"
-	"thymer-bar/internal/sync"
 	"thymer-bar/internal/sync/github"
 )
 
@@ -71,16 +71,16 @@ func syncGitHub() {
 	fmt.Printf("Syncing %d repos...\n", len(cfg.GitHub.Repos))
 
 	count := 0
-	engine := github.New(func(ctx context.Context, record *sync.Record) error {
+	engine := github.New(func(ctx context.Context, b *bit.Bit) error {
 		count++
-		state := record.Fields["state"].(string)
-		typ := record.Type
-		fmt.Printf("  [%s] #%v %s (%s)\n", typ, record.Fields["number"], record.Title, state)
+		state := b.GetString("state")
+		typ := b.GetString("type")
+		fmt.Printf("  [%s] #%v %s (%s)\n", typ, b.GetInt("number"), b.Title(), state)
 
 		// Write to markdown if projector is set
 		if projector != nil {
-			if err := projector.WriteRecord(record); err != nil {
-				fmt.Printf("    ⚠ failed to write markdown: %v\n", err)
+			if err := projector.WriteBit(b); err != nil {
+				fmt.Printf("    Warning: failed to write markdown: %v\n", err)
 			}
 		}
 		return nil

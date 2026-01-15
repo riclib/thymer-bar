@@ -2,21 +2,21 @@ package github
 
 import (
 	"context"
-	"fmt"
+	"strings"
 	"time"
 
-	"thymer-bar/internal/sync"
+	"thymer-bar/internal/bit"
 	"thymer-bar/internal/webhook"
 )
 
 // WebhookHandler handles GitHub webhooks.
 type WebhookHandler struct {
-	onRecord func(ctx context.Context, record *sync.Record) error
+	onBit BitCallback
 }
 
 // NewWebhookHandler creates a new GitHub webhook handler.
-func NewWebhookHandler(onRecord func(ctx context.Context, record *sync.Record) error) *WebhookHandler {
-	return &WebhookHandler{onRecord: onRecord}
+func NewWebhookHandler(onBit BitCallback) *WebhookHandler {
+	return &WebhookHandler{onBit: onBit}
 }
 
 func (h *WebhookHandler) Source() string {
@@ -58,9 +58,9 @@ func (h *WebhookHandler) handleIssues(ctx context.Context, payload []byte) error
 		return nil
 	}
 
-	record := issueToRecord(event.Repository.FullName, event.Issue)
-	if h.onRecord != nil {
-		return h.onRecord(ctx, record)
+	b := webhookIssueToBit(event.Repository.FullName, event.Issue)
+	if h.onBit != nil {
+		return h.onBit(ctx, b)
 	}
 	return nil
 }
@@ -83,9 +83,9 @@ func (h *WebhookHandler) handlePullRequest(ctx context.Context, payload []byte) 
 		return nil
 	}
 
-	record := prToRecord(event.Repository.FullName, event.PullRequest)
-	if h.onRecord != nil {
-		return h.onRecord(ctx, record)
+	b := webhookPRToBit(event.Repository.FullName, event.PullRequest)
+	if h.onBit != nil {
+		return h.onBit(ctx, b)
 	}
 	return nil
 }
@@ -103,71 +103,102 @@ func (h *WebhookHandler) handleIssueComment(ctx context.Context, payload []byte)
 	}
 
 	// Treat as issue update
-	record := issueToRecord(event.Repository.FullName, event.Issue)
-	if h.onRecord != nil {
-		return h.onRecord(ctx, record)
+	b := webhookIssueToBit(event.Repository.FullName, event.Issue)
+	if h.onBit != nil {
+		return h.onBit(ctx, b)
 	}
 	return nil
 }
 
-func issueToRecord(repo string, issue *webhook.GitHubIssue) *sync.Record {
+// webhookIssueToBit converts a webhook issue to a Bit.
+func webhookIssueToBit(repo string, issue *webhook.GitHubIssue) *bit.Bit {
+	// Parse repo into owner/name
+	parts := strings.SplitN(repo, "/", 2)
+	owner, name := parts[0], parts[1]
+
+	// Build canonical URI
+	masterURI := bit.BuildGitHubURI(owner, name, issue.Number, "issues")
+
+	// Extract labels
 	labels := make([]string, 0, len(issue.Labels))
 	for _, l := range issue.Labels {
 		labels = append(labels, l.Name)
 	}
 
+	// Create the Bit
+	b := bit.New(masterURI, bit.SystemGitHub)
+	b.Content = issue.Body
+
 	createdAt, _ := time.Parse(time.RFC3339, issue.CreatedAt)
 	updatedAt, _ := time.Parse(time.RFC3339, issue.UpdatedAt)
+	b.CreatedAt = createdAt
+	b.UpdatedAt = updatedAt
 
-	return &sync.Record{
-		Source:     "github",
-		ExternalID: fmt.Sprintf("%s#%d", repo, issue.Number),
-		Type:       "issue",
-		Title:      issue.Title,
-		Content:    issue.Body,
-		URL:        issue.HTMLURL,
-		Fields: map[string]any{
-			"repo":   repo,
-			"number": issue.Number,
-			"state":  issue.State,
-			"labels": labels,
-			"author": issue.User.Login,
-		},
-		CreatedAt: createdAt,
-		UpdatedAt: updatedAt,
+	// Set frontmatter
+	b.Set("title", issue.Title)
+	b.Set("repo", repo)
+	b.Set("number", issue.Number)
+	b.Set("state", issue.State)
+	b.Set("type", "issue")
+	b.Set("url", issue.HTMLURL)
+	b.Set("labels", labels)
+	b.Set("author", issue.User.Login)
+
+	// Track completion (state only - webhook doesn't include closed_at timestamp)
+	if issue.State == "closed" {
+		b.Set("completed_at", time.Now()) // Use current time as approximation
 	}
+
+	b.UpdateHash()
+	return b
 }
 
-func prToRecord(repo string, pr *webhook.GitHubPR) *sync.Record {
+// webhookPRToBit converts a webhook PR to a Bit.
+func webhookPRToBit(repo string, pr *webhook.GitHubPR) *bit.Bit {
+	// Parse repo into owner/name
+	parts := strings.SplitN(repo, "/", 2)
+	owner, name := parts[0], parts[1]
+
+	// Build canonical URI
+	masterURI := bit.BuildGitHubURI(owner, name, pr.Number, "pulls")
+
+	// Extract labels
 	labels := make([]string, 0, len(pr.Labels))
 	for _, l := range pr.Labels {
 		labels = append(labels, l.Name)
 	}
 
+	// Determine state
 	state := pr.State
 	if pr.Merged {
 		state = "merged"
 	}
 
+	// Create the Bit
+	b := bit.New(masterURI, bit.SystemGitHub)
+	b.Content = pr.Body
+
 	createdAt, _ := time.Parse(time.RFC3339, pr.CreatedAt)
 	updatedAt, _ := time.Parse(time.RFC3339, pr.UpdatedAt)
+	b.CreatedAt = createdAt
+	b.UpdatedAt = updatedAt
 
-	return &sync.Record{
-		Source:     "github",
-		ExternalID: fmt.Sprintf("%s#%d", repo, pr.Number),
-		Type:       "pr",
-		Title:      pr.Title,
-		Content:    pr.Body,
-		URL:        pr.HTMLURL,
-		Fields: map[string]any{
-			"repo":   repo,
-			"number": pr.Number,
-			"state":  state,
-			"labels": labels,
-			"author": pr.User.Login,
-			"merged": pr.Merged,
-		},
-		CreatedAt: createdAt,
-		UpdatedAt: updatedAt,
+	// Set frontmatter
+	b.Set("title", pr.Title)
+	b.Set("repo", repo)
+	b.Set("number", pr.Number)
+	b.Set("state", state)
+	b.Set("type", "pr")
+	b.Set("url", pr.HTMLURL)
+	b.Set("labels", labels)
+	b.Set("author", pr.User.Login)
+	b.Set("merged", pr.Merged)
+
+	// Track completion (state only - webhook doesn't include timestamps)
+	if pr.Merged || pr.State == "closed" {
+		b.Set("completed_at", time.Now()) // Use current time as approximation
 	}
+
+	b.UpdateHash()
+	return b
 }

@@ -71,6 +71,7 @@ const SyncHubMarkdown = {
   parseMarkdownToLines(markdown) {
     const lines = [];
     let inCode = false, codeLang = '', codeLines = [];
+    let isFirstBlock = true;
 
     for (const line of markdown.split('\n')) {
       const fenceMatch = line.match(/^(\s*)```(.*)$/);
@@ -84,6 +85,7 @@ const SyncHubMarkdown = {
           inCode = false;
           codeLang = '';
           codeLines = [];
+          isFirstBlock = false;
         } else {
           inCode = true;
           codeLang = fenceMatch[2].trim();
@@ -100,7 +102,12 @@ const SyncHubMarkdown = {
 
       const parsed = this.parseLine(line);
       if (parsed) {
+        // Add blank line before headings (except first block)
+        if (parsed.type === 'heading' && !isFirstBlock) {
+          lines.push({ type: 'text', segments: [] });
+        }
         lines.push(parsed);
+        isFirstBlock = false;
       }
     }
 
@@ -116,6 +123,7 @@ const SyncHubMarkdown = {
     let promise = Promise.resolve(afterItem);
     let rendered = 0;
     let inCode = false, codeLang = '', codeLines = [];
+    let isFirstBlock = true;
 
     for (const line of markdown.split('\n')) {
       const fenceMatch = line.match(/^(\s*)```(.*)$/);
@@ -135,6 +143,7 @@ const SyncHubMarkdown = {
             rendered++;
             return block;
           });
+          isFirstBlock = false;
           inCode = false; codeLang = ''; codeLines = [];
         } else {
           inCode = true; codeLang = fenceMatch[2].trim();
@@ -149,17 +158,32 @@ const SyncHubMarkdown = {
       if (!parsed) continue;
 
       const { type, segments, level } = parsed;
+      const isHeading = type === 'heading';
+      const needsBlankLine = isHeading && !isFirstBlock;
 
       promise = promise.then(async (last) => {
-        const item = await record.createLineItem(null, last, type);
+        let insertAfter = last;
+
+        // Add blank line before headings (except first block)
+        if (needsBlankLine) {
+          const blank = await record.createLineItem(null, insertAfter, 'text');
+          if (blank) {
+            blank.setSegments([]);
+            insertAfter = blank;
+          }
+        }
+
+        const item = await record.createLineItem(null, insertAfter, type);
         if (!item) return last;
-        if (type === 'heading' && level > 1) {
+        if (isHeading && level > 1) {
           try { item.setHeadingSize?.(level); } catch (e) {}
         }
         item.setSegments(segments);
         rendered++;
         return item;
       });
+
+      isFirstBlock = false;
     }
 
     await promise;

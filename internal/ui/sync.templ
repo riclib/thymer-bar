@@ -83,45 +83,60 @@ templ SyncInfoDefault(sources []SyncSource, history []SyncHistoryEntry) {
 		@icon.Cloud()
 		<span>Sync Dashboard</span>
 	</div>
-	<div class="sm-info-content">
-		<div class="sm-stats">
-			<div class="sm-stat">
-				<span class="sm-stat-value">{ countEnabled(sources) }</span>
-				<span class="sm-stat-label">Active Sources</span>
+	<div class="sm-info-two-col">
+		<!-- Left column: Controls -->
+		<div class="sm-info-col">
+			<div class="sm-stats">
+				<div class="sm-stat">
+					<span class="sm-stat-value">{ countEnabled(sources) }</span>
+					<span class="sm-stat-label">Active</span>
+				</div>
+				<div class="sm-stat">
+					<span class="sm-stat-value">{ countAuthenticated(sources) }</span>
+					<span class="sm-stat-label">Connected</span>
+				</div>
+				<div class="sm-stat">
+					<span class="sm-stat-value">{ totalItems(sources) }</span>
+					<span class="sm-stat-label">Items</span>
+				</div>
 			</div>
-			<div class="sm-stat">
-				<span class="sm-stat-value">{ countAuthenticated(sources) }</span>
-				<span class="sm-stat-label">Authenticated</span>
-			</div>
-			<div class="sm-stat">
-				<span class="sm-stat-value">{ totalItems(sources) }</span>
-				<span class="sm-stat-label">Total Items</span>
+			<p class="sm-info-hint">Select a source to configure sync settings.</p>
+			<div class="sm-actions-section">
+				<button class="sm-btn primary full-width" data-action="sync-all">
+					@icon.RefreshCw()
+					<span>Sync All Enabled</span>
+				</button>
+				<div class="sm-btn-row">
+					<button class="sm-btn sm-btn-half" data-action="resync-all" title="Clear all data and fetch everything fresh">
+						@icon.Trash()
+						<span>Full Resync</span>
+					</button>
+					<button class="sm-btn sm-btn-half" data-action="rerender-all" title="Re-push all data to Thymer">
+						@icon.Repeat()
+						<span>Rerender</span>
+					</button>
+				</div>
+				<button class="sm-btn full-width" data-action="hide">
+					@icon.LogOut()
+					<span>Close</span>
+				</button>
 			</div>
 		</div>
-		<p class="sm-info-hint">Select a source to configure authentication and sync settings.</p>
-
-		if len(history) > 0 {
-			<div class="sm-history-section">
-				<div class="sm-section-header">Recent Activity</div>
+		<!-- Right column: History -->
+		<div class="sm-info-col sm-history-col">
+			<div class="sm-section-header">Recent Activity</div>
+			if len(history) > 0 {
 				<div class="sm-history-list">
 					for i, h := range history {
-						if i < 5 {
+						if i < 10 {
 							@SyncHistoryItem(h)
 						}
 					}
 				</div>
-			</div>
-		}
-	</div>
-	<div class="sm-info-actions">
-		<button class="sm-btn primary full-width" data-action="sync-all">
-			@icon.RefreshCw()
-			<span>Sync All Enabled</span>
-		</button>
-		<button class="sm-btn full-width" data-action="hide">
-			@icon.LogOut()
-			<span>Close</span>
-		</button>
+			} else {
+				<p class="sm-empty-history">No sync history yet</p>
+			}
+		</div>
 	</div>
 }
 
@@ -134,112 +149,128 @@ templ SyncInfoSource(s SyncSource) {
 			@icon.X()
 		</button>
 	</div>
-	<div class="sm-info-content">
-		<p class="sm-info-desc">{ s.Description }</p>
+	<div class="sm-info-two-col">
+		<!-- Left column: Source details -->
+		<div class="sm-info-col">
+			<p class="sm-info-desc">{ s.Description }</p>
 
-		<!-- Auth Status -->
-		<div class="sm-auth-section">
-			<div class="sm-section-header">Authentication</div>
-			<div class="sm-auth-status">
-				@authStatusBadge(s.AuthStatus)
-				if s.AuthStatus == AuthAuthenticated {
-					<button class="sm-btn-small" data-action="disconnect" data-source={ s.ID }>
-						Disconnect
-					</button>
-				} else {
-					<button class="sm-btn-small primary" data-action="connect" data-source={ s.ID }>
-						Connect
-					</button>
+			<!-- Auth Status -->
+			<div class="sm-auth-section">
+				<div class="sm-section-header">Authentication</div>
+				<div class="sm-auth-status">
+					@authStatusBadge(s.AuthStatus)
+					if s.AuthStatus == AuthAuthenticated {
+						<button class="sm-btn-small" data-action="disconnect" data-source={ s.ID }>
+							Disconnect
+						</button>
+					} else {
+						<button class="sm-btn-small primary" data-action="connect" data-source={ s.ID }>
+							Connect
+						</button>
+					}
+				</div>
+			</div>
+
+			<!-- Sync Status -->
+			<div class="sm-details">
+				<div class="sm-info-row">
+					<span class="sm-info-label">Status</span>
+					<span class="sm-info-value">
+						@syncStatusBadge(s.SyncStatus, s.Enabled)
+					</span>
+				</div>
+				<div class="sm-info-row">
+					<span class="sm-info-label">Enabled</span>
+					<label class="sm-toggle">
+						<input
+							type="checkbox"
+							checked?={ s.Enabled }
+							data-action="toggle-enabled"
+							data-source={ s.ID }
+							disabled?={ s.AuthStatus != AuthAuthenticated }
+						/>
+						<span class="sm-toggle-slider"></span>
+					</label>
+				</div>
+				<div class="sm-info-row">
+					<span class="sm-info-label">Last Sync</span>
+					<span class="sm-info-value">
+						if s.LastSync != nil {
+							{ formatTime(*s.LastSync) }
+						} else {
+							<span class="sm-muted">Never</span>
+						}
+					</span>
+				</div>
+				<div class="sm-info-row">
+					<span class="sm-info-label">Items</span>
+					<span class="sm-info-value">{ itoa(s.ItemCount) }</span>
+				</div>
+				if s.LastError != "" {
+					<div class="sm-info-row error">
+						<span class="sm-info-label">Error</span>
+						<span class="sm-info-value sm-error">{ s.LastError }</span>
+					</div>
 				}
 			</div>
-		</div>
 
-		<!-- Sync Status -->
-		<div class="sm-details">
-			<div class="sm-info-row">
-				<span class="sm-info-label">Status</span>
-				<span class="sm-info-value">
-					@syncStatusBadge(s.SyncStatus, s.Enabled)
-				</span>
-			</div>
-			<div class="sm-info-row">
-				<span class="sm-info-label">Enabled</span>
-				<label class="sm-toggle">
-					<input
-						type="checkbox"
-						checked?={ s.Enabled }
-						data-action="toggle-enabled"
-						data-source={ s.ID }
-						disabled?={ s.AuthStatus != AuthAuthenticated }
-					/>
-					<span class="sm-toggle-slider"></span>
-				</label>
-			</div>
-			<div class="sm-info-row">
-				<span class="sm-info-label">Last Sync</span>
-				<span class="sm-info-value">
-					if s.LastSync != nil {
-						{ formatTime(*s.LastSync) }
-					} else {
-						<span class="sm-muted">Never</span>
-					}
-				</span>
-			</div>
-			<div class="sm-info-row">
-				<span class="sm-info-label">Items</span>
-				<span class="sm-info-value">{ itoa(s.ItemCount) }</span>
-			</div>
-			if s.LastError != "" {
-				<div class="sm-info-row error">
-					<span class="sm-info-label">Error</span>
-					<span class="sm-info-value sm-error">{ s.LastError }</span>
+			<!-- Source Config -->
+			if len(s.ConfigItems) > 0 {
+				<div class="sm-config-section">
+					<div class="sm-section-header">
+						Configuration
+						<button class="sm-btn-icon" data-action="configure" data-source={ s.ID }>
+							@icon.Settings()
+						</button>
+					</div>
+					<div class="sm-config-items">
+						for _, item := range s.ConfigItems {
+							<span class="sm-config-item">{ item }</span>
+						}
+					</div>
+				</div>
+			} else if s.AuthStatus == AuthAuthenticated {
+				<div class="sm-config-section">
+					<div class="sm-section-header">Configuration</div>
+					<button class="sm-btn full-width" data-action="configure" data-source={ s.ID }>
+						@icon.Settings()
+						<span>Configure { s.Name }</span>
+					</button>
 				</div>
 			}
 		</div>
+		<!-- Right column: Actions -->
+		<div class="sm-info-col sm-actions-col">
+			<!-- Progress indicator -->
+			<div id="sync-progress" class="sm-sync-progress"></div>
 
-		<!-- Source Config -->
-		if len(s.ConfigItems) > 0 {
-			<div class="sm-config-section">
-				<div class="sm-section-header">
-					Configuration
-					<button class="sm-btn-icon" data-action="configure" data-source={ s.ID }>
-						@icon.Settings()
+			<div class="sm-actions-section">
+				if s.AuthStatus == AuthAuthenticated && s.Enabled {
+					<button class="sm-btn primary full-width" data-action="sync-now" data-source={ s.ID }>
+						@icon.RefreshCw()
+						<span>Sync Now</span>
+					</button>
+				}
+				<button class="sm-btn full-width" data-action="view-history" data-source={ s.ID }>
+					@icon.History()
+					<span>View History</span>
+				</button>
+				<div class="sm-btn-row">
+					<button class="sm-btn sm-btn-half" data-action="resync-all" title="Clear all data and fetch everything fresh">
+						@icon.Trash()
+						<span>Full Resync</span>
+					</button>
+					<button class="sm-btn sm-btn-half" data-action="rerender-all" title="Re-push all data to Thymer">
+						@icon.Repeat()
+						<span>Rerender</span>
 					</button>
 				</div>
-				<div class="sm-config-items">
-					for _, item := range s.ConfigItems {
-						<span class="sm-config-item">{ item }</span>
-					}
-				</div>
-			</div>
-		} else if s.AuthStatus == AuthAuthenticated {
-			<div class="sm-config-section">
-				<div class="sm-section-header">Configuration</div>
-				<button class="sm-btn full-width" data-action="configure" data-source={ s.ID }>
-					@icon.Settings()
-					<span>Configure { s.Name }</span>
+				<button class="sm-btn full-width" data-action="hide">
+					@icon.LogOut()
+					<span>Close</span>
 				</button>
 			</div>
-		}
-	</div>
-	<!-- Progress indicator for real-time sync feedback -->
-	<div id="sync-progress" class="sm-sync-progress"></div>
-	<div class="sm-info-actions">
-		if s.AuthStatus == AuthAuthenticated && s.Enabled {
-			<button class="sm-btn primary full-width" data-action="sync-now" data-source={ s.ID }>
-				@icon.RefreshCw()
-				<span>Sync Now</span>
-			</button>
-		}
-		<button class="sm-btn full-width" data-action="view-history" data-source={ s.ID }>
-			@icon.History()
-			<span>View History</span>
-		</button>
-		<div class="sm-info-divider"></div>
-		<button class="sm-btn full-width" data-action="hide">
-			@icon.LogOut()
-			<span>Close</span>
-		</button>
+		</div>
 	</div>
 }
 
@@ -286,15 +317,17 @@ templ SyncSourceCard(s SyncSource) {
 // SyncHistoryItem renders a history entry
 templ SyncHistoryItem(h SyncHistoryEntry) {
 	<div class={ "sm-history-item", h.Status }>
-		<div class="sm-history-source">{ h.Source }</div>
-		<div class="sm-history-time">{ formatTime(h.Timestamp) }</div>
+		<div class="sm-history-head">
+			<span class="sm-history-source">{ h.Source }</span>
+			<span class="sm-history-time">{ formatTime(h.Timestamp) }</span>
+		</div>
 		<div class="sm-history-result">
 			if h.Status == "success" {
-				<span class="sm-badge success">{ itoa(h.ItemCount) } items</span>
+				<span class="count">{ itoa(h.ItemCount) } items</span> synced
 			} else if h.Status == "partial" {
-				<span class="sm-badge warning">{ h.Message }</span>
+				<span class="count">{ itoa(h.ItemCount) }</span> — { h.Message }
 			} else {
-				<span class="sm-badge error">{ h.Message }</span>
+				<span class="error-msg">{ h.Message }</span>
 			}
 		</div>
 	</div>
