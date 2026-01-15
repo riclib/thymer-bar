@@ -17,52 +17,44 @@ const SyncHubMarkdown = {
 
   /**
    * Replace all contents of a record with new markdown.
-   * Change detection is handled by Go - this just does the replacement.
+   * Deletes all existing line items and inserts fresh content.
    */
   async replace(markdown, record) {
     if (!record) {
-      console.warn('[SyncHub] replaceContents: No record provided');
+      console.warn('[SyncHub] replace: No record provided');
       return 0;
     }
 
-    // Get existing top-level line items
+    // Get all existing line items
     const existingItems = await record.getLineItems();
-    const topLevelItems = existingItems.filter((i) => i.parent_guid === record.guid);
 
-    // Parse new markdown into lines/blocks
-    const newLines = this.parseMarkdownToLines(markdown);
-
-    // Update existing items or create new ones
-    let itemIndex = 0;
-    let lastItem = null;
-
-    for (const lineData of newLines) {
-      if (itemIndex < topLevelItems.length) {
-        // Update existing item
-        const item = topLevelItems[itemIndex];
-        item.setSegments(lineData.segments);
-        lastItem = item;
-      } else {
-        // Create new item
-        const item = await record.createLineItem(null, lastItem, lineData.type);
-        if (item) {
-          if (lineData.type === 'heading' && lineData.level > 1) {
-            try { item.setHeadingSize?.(lineData.level); } catch (e) {}
-          }
-          item.setSegments(lineData.segments);
-          lastItem = item;
-        }
+    // Delete all items - children first, then parents (leaf-to-root order)
+    // Sort by depth (items with no children in existingItems go first)
+    const itemsWithChildren = new Set();
+    for (const item of existingItems) {
+      if (item.parent_guid && item.parent_guid !== record.guid) {
+        itemsWithChildren.add(item.parent_guid);
       }
-      itemIndex++;
     }
 
-    // Clear any extra existing items (can't delete, so empty them)
-    for (let i = itemIndex; i < topLevelItems.length; i++) {
-      topLevelItems[i].setSegments([]);
+    // Delete leaf items first
+    for (const item of existingItems) {
+      if (!itemsWithChildren.has(item.guid)) {
+        try { await item.delete(); } catch (e) {}
+      }
     }
 
-    console.log('[SyncHub] Replaced content:', newLines.length, 'lines');
-    return newLines.length;
+    // Then delete remaining (parents)
+    for (const item of existingItems) {
+      if (itemsWithChildren.has(item.guid)) {
+        try { await item.delete(); } catch (e) {}
+      }
+    }
+
+    // Insert fresh content
+    const count = await this.insert(markdown, record, null);
+    console.log('[SyncHub] Replaced content:', count, 'lines');
+    return count;
   },
 
   /**
