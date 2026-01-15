@@ -1,0 +1,1108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=1920, height=720">
+    <title>Lifelog — Command Center</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            /* Volcanic darks */
+            --void: #050505;
+            --deep: #0a0a09;
+            --surface: #121110;
+            --elevated: #1a1918;
+            --border: #252322;
+            --hover: #2a2827;
+
+            /* Warm stone */
+            --text-bright: #faf6f0;
+            --text: #d4cdc2;
+            --text-dim: #8a8279;
+            --text-muted: #5c574f;
+
+            /* Ember accent */
+            --ember: #e09f4a;
+            --ember-bright: #f0b866;
+            --ember-glow: rgba(224, 159, 74, 0.35);
+            --ember-soft: rgba(224, 159, 74, 0.08);
+
+            /* Sage success */
+            --sage: #7ba87b;
+            --sage-glow: rgba(123, 168, 123, 0.4);
+            --sage-soft: rgba(123, 168, 123, 0.12);
+
+            /* Steel calendar */
+            --steel: #7a9cb8;
+            --steel-soft: rgba(122, 156, 184, 0.12);
+
+            /* Alert */
+            --coral: #c4776a;
+
+            /* Metrics */
+            --touch: 44px;
+            --radius: 10px;
+            --radius-sm: 6px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        html, body {
+            width: 1920px;
+            height: 720px;
+            overflow: hidden;
+            background: var(--void);
+            font-family: 'IBM Plex Mono', monospace;
+            color: var(--text);
+            font-size: 13px;
+        }
+
+        /* Film grain overlay */
+        body::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            opacity: 0.02;
+            pointer-events: none;
+            background: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='g'%3E%3CfeTurbulence baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+            z-index: 9999;
+        }
+
+        /* === LAYOUT === */
+        .dashboard {
+            display: grid;
+            grid-template-columns: 380px 1fr 340px 260px;
+            height: 100%;
+            background: var(--border);
+            gap: 1px;
+        }
+
+        .panel {
+            background: var(--surface);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .panel-head {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .panel-label {
+            font-family: 'Fraunces', serif;
+            font-optical-sizing: auto;
+            font-size: 10px;
+            font-weight: 400;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+
+        .panel-meta {
+            font-size: 10px;
+            color: var(--text-muted);
+            background: var(--elevated);
+            padding: 5px 10px;
+            border-radius: 20px;
+        }
+
+        /* === TIMELINE === */
+        .timeline-wrap {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .timeline-body {
+            height: 100%;
+            overflow-y: auto;
+            padding: 12px 0;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .timeline-body::-webkit-scrollbar { width: 0; }
+
+        /* Scroll fades - hint at more content */
+        .timeline-wrap::before,
+        .timeline-wrap::after {
+            content: '';
+            position: absolute;
+            left: 0;
+            right: 0;
+            height: 32px;
+            pointer-events: none;
+            z-index: 2;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        .timeline-wrap::before {
+            top: 0;
+            background: linear-gradient(to bottom, var(--surface) 0%, transparent 100%);
+        }
+
+        .timeline-wrap::after {
+            bottom: 0;
+            background: linear-gradient(to top, var(--surface) 0%, transparent 100%);
+        }
+
+        .timeline-wrap.can-scroll-up::before,
+        .timeline-wrap.can-scroll-down::after {
+            opacity: 1;
+        }
+
+        .hour-row {
+            display: grid;
+            grid-template-columns: 52px 1fr;
+            min-height: 54px;
+        }
+
+        .hour-num {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-align: right;
+            padding: 8px 14px 0 0;
+            font-weight: 500;
+        }
+
+        .hour-row.now .hour-num {
+            color: var(--ember);
+        }
+
+        .hour-track {
+            border-left: 1px solid var(--border);
+            padding: 6px 16px 6px 14px;
+            position: relative;
+        }
+
+        .hour-row.now .hour-track::before {
+            content: '';
+            position: absolute;
+            left: -4px;
+            top: 14px;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--ember);
+            box-shadow: 0 0 14px var(--ember-glow), 0 0 4px var(--ember);
+        }
+
+        /* Task blocks */
+        .block {
+            background: var(--elevated);
+            border-radius: var(--radius-sm);
+            padding: 10px 12px;
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-height: var(--touch);
+            cursor: pointer;
+            transition: transform 0.1s ease, box-shadow 0.15s ease;
+            border: 1px solid transparent;
+        }
+
+        .block:active { transform: scale(0.98); }
+
+        .block.current {
+            border-color: var(--ember);
+            box-shadow: 0 0 20px -4px var(--ember-glow);
+        }
+
+        .block.past { opacity: 0.45; }
+
+        .block.cal {
+            background: var(--steel-soft);
+            border-left: 3px solid var(--steel);
+        }
+
+        .block-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--text-muted);
+            flex-shrink: 0;
+        }
+
+        .block.current .block-dot {
+            background: var(--sage);
+            box-shadow: 0 0 8px var(--sage-glow);
+            animation: breathe 2.5s ease-in-out infinite;
+        }
+
+        @keyframes breathe {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(0.85); opacity: 0.6; }
+        }
+
+        .block-text { flex: 1; min-width: 0; }
+
+        .block-title {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .block-sub {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        .block-dur {
+            font-size: 10px;
+            color: var(--text-dim);
+            flex-shrink: 0;
+        }
+
+        /* === FOCUS === */
+        .focus {
+            background: radial-gradient(ellipse at 50% 35%, var(--elevated) 0%, var(--surface) 65%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+        }
+
+        .focus-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .focus-status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--sage);
+            animation: breathe 2.5s ease-in-out infinite;
+        }
+
+        .focus-status-text {
+            font-size: 10px;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--sage);
+        }
+
+        .focus-ring-wrap {
+            position: relative;
+            width: 320px;
+            height: 320px;
+            margin: 12px 0 28px;
+        }
+
+        .focus-ring {
+            width: 100%;
+            height: 100%;
+            transform: rotate(-90deg);
+        }
+
+        .ring-bg {
+            fill: none;
+            stroke: var(--elevated);
+            stroke-width: 5;
+        }
+
+        .ring-progress {
+            fill: none;
+            stroke: var(--ember);
+            stroke-width: 5;
+            stroke-linecap: round;
+            stroke-dasharray: 942;
+            stroke-dashoffset: 471;
+            filter: drop-shadow(0 0 10px var(--ember-glow));
+            transition: stroke-dashoffset 0.8s ease;
+        }
+
+        .focus-center {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding-top: 16px;
+        }
+
+        .focus-time {
+            font-size: 68px;
+            font-weight: 600;
+            color: var(--text-bright);
+            letter-spacing: -0.03em;
+            line-height: 1;
+        }
+
+        .focus-unit {
+            font-size: 12px;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-top: 12px;
+        }
+
+        .focus-task {
+            font-family: 'Fraunces', serif;
+            font-size: 26px;
+            font-weight: 400;
+            color: var(--text-bright);
+            margin-bottom: 6px;
+            text-align: center;
+        }
+
+        .focus-source {
+            font-size: 12px;
+            color: var(--text-dim);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 28px;
+        }
+
+        .focus-source::before {
+            content: '';
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: var(--ember);
+        }
+
+        .focus-actions {
+            display: flex;
+            gap: 12px;
+        }
+
+        .btn {
+            min-height: 52px;
+            padding: 0 32px;
+            border-radius: var(--radius);
+            border: none;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 14px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            transition: transform 0.1s ease;
+        }
+
+        .btn:active { transform: scale(0.96); }
+
+        .btn-primary {
+            background: var(--ember);
+            color: var(--void);
+        }
+
+        .btn-ghost {
+            background: var(--elevated);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        /* === QUEUE === */
+        .queue-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+        }
+
+        .queue-body::-webkit-scrollbar { width: 0; }
+
+        .q-item {
+            background: var(--elevated);
+            border-radius: var(--radius-sm);
+            padding: 14px 16px;
+            margin-bottom: 10px;
+            min-height: var(--touch);
+            cursor: pointer;
+            transition: transform 0.1s ease;
+            border: 1px solid transparent;
+        }
+
+        .q-item:active { transform: scale(0.98); }
+
+        .q-item.next {
+            border-color: var(--ember-soft);
+            background: linear-gradient(135deg, var(--elevated) 0%, var(--ember-soft) 100%);
+        }
+
+        .q-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 10px;
+        }
+
+        .q-title {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text);
+            line-height: 1.35;
+        }
+
+        .q-time {
+            font-size: 10px;
+            color: var(--ember);
+            background: var(--ember-soft);
+            padding: 3px 8px;
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+
+        .q-meta {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-top: 6px;
+            display: flex;
+            gap: 12px;
+        }
+
+        .q-divider {
+            font-size: 9px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            padding: 18px 0 10px;
+        }
+
+        /* === AMBIENT === */
+        .ambient {
+            background: linear-gradient(180deg, var(--surface) 0%, var(--deep) 100%);
+        }
+
+        .ambient-body {
+            flex: 1;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            overflow-y: auto;
+        }
+
+        /* Weather */
+        .weather {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .weather-icon { font-size: 28px; }
+
+        .weather-temp {
+            font-size: 26px;
+            font-weight: 500;
+            color: var(--text-bright);
+        }
+
+        .weather-desc {
+            font-size: 11px;
+            color: var(--text-dim);
+        }
+
+        /* Stats */
+        .stats {
+            display: flex;
+            justify-content: space-between;
+            padding: 14px 0;
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .stat {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .stat-icon { font-size: 13px; opacity: 0.8; }
+        .stat-val { font-size: 14px; font-weight: 600; }
+        .stat-val.alert { color: var(--coral); }
+        .stat-val.good { color: var(--sage); }
+
+        /* Calendar upcoming */
+        .upcoming {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .upcoming-label {
+            font-size: 9px;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+
+        .up-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            background: var(--elevated);
+            border-radius: var(--radius-sm);
+            min-height: var(--touch);
+            cursor: pointer;
+        }
+
+        .up-item:active { transform: scale(0.98); }
+
+        .up-time {
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--steel);
+            min-width: 42px;
+        }
+
+        .up-title {
+            font-size: 12px;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* Habits */
+        .habits {
+            margin-top: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .habits-label {
+            font-size: 9px;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+
+        .habit-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 10px;
+            background: var(--elevated);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: transform 0.1s ease;
+        }
+
+        .habit-item:active { transform: scale(0.98); }
+
+        .habit-icon {
+            font-size: 16px;
+            width: 24px;
+            text-align: center;
+            flex-shrink: 0;
+        }
+
+        .habit-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .habit-name {
+            font-size: 11px;
+            color: var(--text);
+            margin-bottom: 4px;
+        }
+
+        .habit-track {
+            height: 4px;
+            background: var(--border);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .habit-progress {
+            height: 100%;
+            border-radius: 2px;
+            transition: width 0.3s ease;
+        }
+
+        .habit-item.habit .habit-progress {
+            background: var(--sage);
+        }
+
+        .habit-item.vice .habit-progress {
+            background: var(--coral);
+        }
+
+        .habit-check {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 2px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            flex-shrink: 0;
+            transition: all 0.2s ease;
+        }
+
+        .habit-item.done .habit-check {
+            background: var(--sage);
+            border-color: var(--sage);
+            color: var(--void);
+            box-shadow: 0 0 8px var(--sage-glow);
+        }
+
+        .habit-item.vice.done .habit-check {
+            background: var(--coral);
+            border-color: var(--coral);
+            box-shadow: 0 0 8px rgba(196, 119, 106, 0.4);
+        }
+
+        /* Ripple effect */
+        .ripple {
+            position: absolute;
+            border-radius: 50%;
+            background: rgba(224, 159, 74, 0.25);
+            transform: scale(0);
+            animation: ripple-out 0.5s ease-out forwards;
+            pointer-events: none;
+        }
+
+        @keyframes ripple-out {
+            to { transform: scale(2.5); opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <!-- TIMELINE -->
+        <div class="panel">
+            <div class="panel-head">
+                <span class="panel-label">Timeline</span>
+                <span class="panel-meta">Thu, Jan 16</span>
+            </div>
+            <div class="timeline-wrap">
+                <div class="timeline-body">
+                    <div class="hour-row past">
+                        <div class="hour-num">6a</div>
+                        <div class="hour-track"></div>
+                    </div>
+                    <div class="hour-row past">
+                        <div class="hour-num">7a</div>
+                        <div class="hour-track">
+                            <div class="block past">
+                                <div class="block-dot"></div>
+                                <div class="block-text">
+                                    <div class="block-title">Morning Run</div>
+                                    <div class="block-sub">5k</div>
+                                </div>
+                                <div class="block-dur">45m</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="hour-row past">
+                        <div class="hour-num">8a</div>
+                        <div class="hour-track"></div>
+                    </div>
+                    <div class="hour-row">
+                        <div class="hour-num">9a</div>
+                        <div class="hour-track">
+                            <div class="block cal past">
+                                <div class="block-text">
+                                    <div class="block-title">Team Standup</div>
+                                    <div class="block-sub">Google Meet</div>
+                                </div>
+                                <div class="block-dur">30m</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="hour-row">
+                        <div class="hour-num">10a</div>
+                        <div class="hour-track">
+                            <div class="block past">
+                                <div class="block-dot"></div>
+                                <div class="block-text">
+                                    <div class="block-title">Review PR #42</div>
+                                    <div class="block-sub">riclib/v4</div>
+                                </div>
+                                <div class="block-dur">1h</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="hour-row now">
+                        <div class="hour-num">11a</div>
+                        <div class="hour-track">
+                            <div class="block current">
+                                <div class="block-dot"></div>
+                                <div class="block-text">
+                                    <div class="block-title">Auth Bug Fix</div>
+                                    <div class="block-sub">riclib/v4 #23</div>
+                                </div>
+                                <div class="block-dur">2h</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="hour-row">
+                        <div class="hour-num">12p</div>
+                        <div class="hour-track"></div>
+                    </div>
+                    <div class="hour-row">
+                        <div class="hour-num">1p</div>
+                        <div class="hour-track">
+                            <div class="block cal">
+                                <div class="block-text">
+                                    <div class="block-title">Lunch w/ Sarah</div>
+                                    <div class="block-sub">The Mill Cafe</div>
+                                </div>
+                                <div class="block-dur">1h</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="hour-row">
+                        <div class="hour-num">2p</div>
+                        <div class="hour-track">
+                            <div class="block">
+                                <div class="block-dot"></div>
+                                <div class="block-text">
+                                    <div class="block-title">API Refactor</div>
+                                    <div class="block-sub">riclib/v4 #18</div>
+                                </div>
+                                <div class="block-dur">2h</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="hour-row">
+                        <div class="hour-num">4p</div>
+                        <div class="hour-track">
+                            <div class="block cal">
+                                <div class="block-text">
+                                    <div class="block-title">Weekly Sync</div>
+                                    <div class="block-sub">Zoom</div>
+                                </div>
+                                <div class="block-dur">30m</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="hour-row">
+                        <div class="hour-num">5p</div>
+                        <div class="hour-track">
+                            <div class="block">
+                                <div class="block-dot"></div>
+                                <div class="block-text">
+                                    <div class="block-title">Documentation</div>
+                                    <div class="block-sub">thymer-bar</div>
+                                </div>
+                                <div class="block-dur">1h</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="hour-row">
+                        <div class="hour-num">6p</div>
+                        <div class="hour-track"></div>
+                    </div>
+                    <div class="hour-row">
+                        <div class="hour-num">7p</div>
+                        <div class="hour-track">
+                            <div class="block cal">
+                                <div class="block-text">
+                                    <div class="block-title">Dinner w/ Alex</div>
+                                    <div class="block-sub">Home</div>
+                                </div>
+                                <div class="block-dur">1h</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="hour-row">
+                        <div class="hour-num">8p</div>
+                        <div class="hour-track"></div>
+                    </div>
+                    <div class="hour-row">
+                        <div class="hour-num">9p</div>
+                        <div class="hour-track">
+                            <div class="block">
+                                <div class="block-dot"></div>
+                                <div class="block-text">
+                                    <div class="block-title">Side Project</div>
+                                    <div class="block-sub">personal</div>
+                                </div>
+                                <div class="block-dur">1h</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- FOCUS -->
+        <div class="panel focus">
+            <div class="focus-status">
+                <div class="focus-status-dot"></div>
+                <span class="focus-status-text">In Progress</span>
+            </div>
+            <div class="focus-ring-wrap">
+                <svg class="focus-ring" viewBox="0 0 320 320">
+                    <circle class="ring-bg" cx="160" cy="160" r="150"/>
+                    <circle class="ring-progress" cx="160" cy="160" r="150"/>
+                </svg>
+                <div class="focus-center">
+                    <div class="focus-time" id="timer">1:47:23</div>
+                    <div class="focus-unit">elapsed</div>
+                </div>
+            </div>
+            <div class="focus-task">Auth Bug Fix</div>
+            <div class="focus-source">riclib/v4 #23</div>
+            <div class="focus-actions">
+                <button class="btn btn-ghost">⏸ Pause</button>
+                <button class="btn btn-primary">✓ Complete</button>
+            </div>
+        </div>
+
+        <!-- QUEUE -->
+        <div class="panel">
+            <div class="panel-head">
+                <span class="panel-label">Up Next</span>
+                <span class="panel-meta">4 tasks</span>
+            </div>
+            <div class="queue-body">
+                <div class="q-item next">
+                    <div class="q-head">
+                        <div class="q-title">API Refactor</div>
+                        <div class="q-time">2pm</div>
+                    </div>
+                    <div class="q-meta">
+                        <span>riclib/v4 #18</span>
+                        <span>~2h</span>
+                    </div>
+                </div>
+                <div class="q-item">
+                    <div class="q-head">
+                        <div class="q-title">Review PR #42</div>
+                    </div>
+                    <div class="q-meta">
+                        <span>riclib/v4</span>
+                        <span>~30m</span>
+                    </div>
+                </div>
+                <div class="q-item">
+                    <div class="q-head">
+                        <div class="q-title">Update Dashboard Docs</div>
+                    </div>
+                    <div class="q-meta">
+                        <span>thymer-bar</span>
+                        <span>~45m</span>
+                    </div>
+                </div>
+                <div class="q-divider">Tomorrow</div>
+                <div class="q-item">
+                    <div class="q-head">
+                        <div class="q-title">Lifelog Schema Migration</div>
+                    </div>
+                    <div class="q-meta">
+                        <span>thymer-bar #2</span>
+                        <span>~3h</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- AMBIENT -->
+        <div class="panel ambient">
+            <div class="panel-head">
+                <span class="panel-label">Today</span>
+            </div>
+            <div class="ambient-body">
+                <!-- Weather -->
+                <div class="weather">
+                    <span class="weather-icon">☀️</span>
+                    <div>
+                        <div class="weather-temp">72°</div>
+                        <div class="weather-desc">Clear skies</div>
+                    </div>
+                </div>
+
+                <!-- Stats -->
+                <div class="stats">
+                    <div class="stat">
+                        <span class="stat-icon">📬</span>
+                        <span class="stat-val">3</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-icon">🔥</span>
+                        <span class="stat-val alert">1</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-icon">✓</span>
+                        <span class="stat-val good">6</span>
+                    </div>
+                </div>
+
+                <!-- Calendar -->
+                <div class="upcoming">
+                    <div class="upcoming-label">Coming Up</div>
+                    <div class="up-item">
+                        <span class="up-time">1:00p</span>
+                        <span class="up-title">Lunch w/ Sarah</span>
+                    </div>
+                    <div class="up-item">
+                        <span class="up-time">4:30p</span>
+                        <span class="up-title">Weekly Sync</span>
+                    </div>
+                </div>
+
+                <!-- Habits -->
+                <div class="habits">
+                    <div class="habits-label">Habits</div>
+                    <div class="habit-item habit done" data-habit="exercise">
+                        <span class="habit-icon">🏃</span>
+                        <div class="habit-info">
+                            <div class="habit-name">Exercise</div>
+                            <div class="habit-track"><div class="habit-progress" style="width: 100%"></div></div>
+                        </div>
+                        <div class="habit-check">✓</div>
+                    </div>
+                    <div class="habit-item habit" data-habit="reading">
+                        <span class="habit-icon">📚</span>
+                        <div class="habit-info">
+                            <div class="habit-name">Reading</div>
+                            <div class="habit-track"><div class="habit-progress" style="width: 40%"></div></div>
+                        </div>
+                        <div class="habit-check"></div>
+                    </div>
+                    <div class="habit-item habit" data-habit="meditate">
+                        <span class="habit-icon">🧘</span>
+                        <div class="habit-info">
+                            <div class="habit-name">Meditate</div>
+                            <div class="habit-track"><div class="habit-progress" style="width: 0%"></div></div>
+                        </div>
+                        <div class="habit-check"></div>
+                    </div>
+                    <div class="habit-item vice" data-habit="caffeine">
+                        <span class="habit-icon">☕</span>
+                        <div class="habit-info">
+                            <div class="habit-name">Caffeine</div>
+                            <div class="habit-track"><div class="habit-progress" style="width: 60%"></div></div>
+                        </div>
+                        <div class="habit-check"></div>
+                    </div>
+                    <div class="habit-item vice done" data-habit="snacking">
+                        <span class="habit-icon">🍪</span>
+                        <div class="habit-info">
+                            <div class="habit-name">Snacking</div>
+                            <div class="habit-track"><div class="habit-progress" style="width: 100%"></div></div>
+                        </div>
+                        <div class="habit-check">✗</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Timeline scroll
+        const timelineWrap = document.querySelector('.timeline-wrap');
+        const timelineBody = document.querySelector('.timeline-body');
+
+        function updateScrollHints() {
+            const { scrollTop, scrollHeight, clientHeight } = timelineBody;
+            timelineWrap.classList.toggle('can-scroll-up', scrollTop > 10);
+            timelineWrap.classList.toggle('can-scroll-down', scrollTop < scrollHeight - clientHeight - 10);
+        }
+
+        timelineBody.addEventListener('scroll', updateScrollHints);
+
+        // Auto-scroll to "now" row on load
+        const nowRow = document.querySelector('.hour-row.now');
+        if (nowRow) {
+            setTimeout(() => {
+                nowRow.scrollIntoView({ block: 'center', behavior: 'instant' });
+                updateScrollHints();
+            }, 100);
+        }
+
+        // Timer
+        let secs = 6443; // 1:47:23
+        const timerEl = document.getElementById('timer');
+        const ringEl = document.querySelector('.ring-progress');
+        const circumference = 942;
+
+        function tick() {
+            secs++;
+            const h = Math.floor(secs / 3600);
+            const m = Math.floor((secs % 3600) / 60);
+            const s = secs % 60;
+            timerEl.textContent = `${h}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+
+            // Progress ring (target 2h)
+            const pct = Math.min(secs / 7200, 1);
+            ringEl.style.strokeDashoffset = circumference - (pct * circumference);
+        }
+        setInterval(tick, 1000);
+
+        // Habit toggles
+        document.querySelectorAll('.habit-item').forEach(h => {
+            h.addEventListener('click', function() {
+                const isDone = this.classList.toggle('done');
+                const progress = this.querySelector('.habit-progress');
+                const check = this.querySelector('.habit-check');
+                const isVice = this.classList.contains('vice');
+
+                if (isDone) {
+                    progress.style.width = '100%';
+                    check.textContent = isVice ? '✗' : '✓';
+                } else {
+                    progress.style.width = '0%';
+                    check.textContent = '';
+                }
+            });
+        });
+
+        // Task selection
+        document.querySelectorAll('.block:not(.cal)').forEach(b => {
+            b.addEventListener('click', function() {
+                document.querySelectorAll('.block').forEach(x => {
+                    x.classList.remove('current');
+                    const dot = x.querySelector('.block-dot');
+                    if (dot) dot.style.background = '';
+                });
+                this.classList.add('current');
+                document.querySelector('.focus-task').textContent = this.querySelector('.block-title').textContent;
+                document.querySelector('.focus-source').textContent = this.querySelector('.block-sub').textContent;
+            });
+        });
+
+        // Touch ripples
+        document.querySelectorAll('.block, .q-item, .btn, .up-item').forEach(el => {
+            el.addEventListener('touchstart', function(e) {
+                const rect = this.getBoundingClientRect();
+                const r = document.createElement('div');
+                r.className = 'ripple';
+                const sz = Math.max(rect.width, rect.height);
+                r.style.width = r.style.height = sz + 'px';
+                r.style.left = (e.touches[0].clientX - rect.left - sz/2) + 'px';
+                r.style.top = (e.touches[0].clientY - rect.top - sz/2) + 'px';
+                this.style.position = 'relative';
+                this.style.overflow = 'hidden';
+                this.appendChild(r);
+                setTimeout(() => r.remove(), 500);
+            });
+        });
+    </script>
+</body>
+</html>
