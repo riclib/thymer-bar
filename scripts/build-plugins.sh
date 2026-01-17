@@ -56,8 +56,10 @@ build_plugin() {
             echo "$css_content" >> "$temp_css"
             mv "$temp_css" "$plugin_dir/style.css"
         else
-            # Update existing version header
-            sed -i "1s|/\*.*\*/|/* $name v$version */|" "$plugin_dir/style.css"
+            # Update existing version header (use temp file for macOS compatibility)
+            local temp_css=$(mktemp)
+            sed "1s|/\*.*\*/|/* $name v$version */|" "$plugin_dir/style.css" > "$temp_css"
+            mv "$temp_css" "$plugin_dir/style.css"
         fi
     fi
 
