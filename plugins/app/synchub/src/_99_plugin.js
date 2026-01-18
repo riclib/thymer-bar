@@ -50,6 +50,9 @@ class Plugin extends CollectionPlugin {
     // Dispatch ready event for collection plugins
     window.dispatchEvent(new CustomEvent('synchub-ready'));
 
+    // Initialize PlannerHub sidebar
+    SyncHubPlanner.init(this.ui, this.data);
+
     // Connect to thymer-bar
     this.connect();
 
@@ -78,7 +81,13 @@ class Plugin extends CollectionPlugin {
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
     }
+    // Cleanup planner
+    if (SyncHubPlanner.sidebarItem) {
+      SyncHubPlanner.sidebarItem.remove();
+    }
+    SyncHubPlanner.hide();
     delete window.syncHub;
+    delete window.plannerHub;
   }
 
   // ===========================================================================

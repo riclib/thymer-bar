@@ -10,6 +10,7 @@ import (
 
 	"thymer-bar/internal/bit"
 	"thymer-bar/internal/config"
+	"thymer-bar/internal/events"
 	"thymer-bar/internal/mcp"
 	internalnats "thymer-bar/internal/nats"
 	"thymer-bar/internal/secrets"
@@ -47,6 +48,10 @@ type App struct {
 
 	// Sync engines
 	syncRegistry *sync.Registry
+
+	// Event system (JetStream-backed for resilience)
+	eventPublisher *events.Publisher
+	eventConsumer  *events.Consumer
 
 	// Configuration
 	dataDir string
@@ -116,8 +121,12 @@ func (a *App) startup(ctx context.Context) {
 
 func (a *App) initTray() {
 	a.tray = tray.New(tray.Config{
-		OnShow: func() {
+		OnDashboard: func() {
 			runtime.WindowShow(a.ctx)
+		},
+		OnSettings: func() {
+			runtime.WindowShow(a.ctx)
+			runtime.EventsEmit(a.ctx, "navigate", "settings")
 		},
 		OnQuit: func() {
 			runtime.Quit(a.ctx)
@@ -173,7 +182,113 @@ func (a *App) initNATS() {
 		fmt.Printf("Failed to create EVENTS stream: %v\n", err)
 	}
 
+	// Initialize event publisher
+	a.eventPublisher = events.NewPublisher(ns.JetStream(), "EVENTS")
+
+	// Initialize event consumer (processes queued events when Thymer is connected)
+	a.eventConsumer, err = events.NewConsumer(ns.JetStream(), "EVENTS", "thymer-renderer", a.handleEvent)
+	if err != nil {
+		fmt.Printf("Failed to create event consumer: %v\n", err)
+	} else {
+		// Start consumer in background
+		go a.eventConsumer.Start(context.Background())
+	}
+
 	fmt.Println("NATS initialized")
+}
+
+// handleEvent processes events from JetStream and sends them to Thymer.
+func (a *App) handleEvent(ctx context.Context, event *events.Event) error {
+	// Only process if Thymer is connected
+	if a.thymer == nil || !a.thymer.Available() {
+		return fmt.Errorf("thymer not connected")
+	}
+
+	slog.Info("processing event", "type", event.Type, "id", event.ID)
+
+	switch event.Type {
+	case events.EventTaskCompleted:
+		// Mark task as completed in Thymer
+		taskGUID, _ := event.Data["task_guid"].(string)
+		elapsed, _ := event.Data["elapsed"].(float64)
+		completed, _ := event.Data["completed"].(string)
+
+		if taskGUID == "" {
+			return nil // Skip if no task GUID
+		}
+
+		// Update the task in Thymer via WebSocket
+		err := a.thymer.UpdateRecord(ctx, taskGUID, map[string]any{
+			"status":       "Done",
+			"completed_at": completed,
+			"time_spent":   int(elapsed),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to update task in Thymer: %w", err)
+		}
+		slog.Info("task marked complete in Thymer", "guid", taskGUID)
+
+	case events.EventTaskStarted:
+		taskGUID, _ := event.Data["task_guid"].(string)
+		if taskGUID != "" {
+			a.thymer.UpdateRecord(ctx, taskGUID, map[string]any{
+				"status": "In Progress",
+			})
+		}
+
+	case events.EventTaskPaused, events.EventTaskResumed:
+		// Could log timestamps to daily note
+		slog.Debug("task state changed", "type", event.Type)
+
+	case events.EventLineItemToggle:
+		// Toggle a line item's checked state in Thymer
+		recordGUID, _ := event.Data["record_guid"].(string)
+		lineItemGUID, _ := event.Data["lineitem_guid"].(string)
+		checked, _ := event.Data["checked"].(bool)
+
+		if recordGUID == "" || lineItemGUID == "" {
+			return nil
+		}
+
+		err := a.thymer.UpdateLineItem(ctx, recordGUID, lineItemGUID, map[string]any{
+			"checked": checked,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to toggle line item: %w", err)
+		}
+		slog.Info("line item toggled", "lineitem", lineItemGUID, "checked", checked)
+
+	case events.EventLineItemAdd:
+		// Add a new line item to a record
+		recordGUID, _ := event.Data["record_guid"].(string)
+		itemType, _ := event.Data["type"].(string)
+		text, _ := event.Data["text"].(string)
+		refGUID, _ := event.Data["ref_guid"].(string)
+
+		if recordGUID == "" {
+			return nil
+		}
+		if itemType == "" {
+			itemType = "task"
+		}
+
+		// Build segments
+		segments := []map[string]any{}
+		if text != "" {
+			segments = append(segments, map[string]any{"type": "text", "text": text})
+		}
+		if refGUID != "" {
+			segments = append(segments, map[string]any{"type": "ref", "text": map[string]string{"guid": refGUID}})
+		}
+
+		_, err := a.thymer.AddLineItem(ctx, recordGUID, itemType, segments)
+		if err != nil {
+			return fmt.Errorf("failed to add line item: %w", err)
+		}
+		slog.Info("line item added", "record", recordGUID, "type", itemType)
+	}
+
+	return nil
 }
 
 func (a *App) initSQLite() {

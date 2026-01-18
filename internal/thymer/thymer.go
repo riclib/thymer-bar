@@ -387,6 +387,149 @@ func (c *Client) Available() bool {
 	return c.ConnectionCount() > 0
 }
 
+// =============================================================================
+// Daily Note / Journal Operations (READ path - direct WebSocket)
+// =============================================================================
+
+// LineItem represents a task/item in a Thymer record.
+type LineItem struct {
+	GUID       string     `json:"guid"`
+	ParentGUID string     `json:"parent_guid,omitempty"`
+	Type       string     `json:"type"` // "task", "bullet", "heading", etc.
+	Checked    bool       `json:"checked"`
+	Text       string     `json:"text"` // Markdown text with [title](thymer:uuid) links
+	Children   []LineItem `json:"children,omitempty"`
+}
+
+// JournalRecord represents a daily note/journal entry.
+type JournalRecord struct {
+	GUID      string     `json:"guid"`
+	Name      string     `json:"name"`
+	Date      string     `json:"date"` // YYYY-MM-DD
+	LineItems []LineItem `json:"line_items"`
+}
+
+// GetTodayJournal retrieves or creates today's daily note.
+func (c *Client) GetTodayJournal(ctx context.Context) (*JournalRecord, error) {
+	resp, err := c.send(ctx, &Message{
+		Type:   "request",
+		Action: "getTodayJournal",
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var result JournalRecord
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// GetLineItems retrieves line items (tasks) from a record.
+func (c *Client) GetLineItems(ctx context.Context, recordGUID string) ([]LineItem, error) {
+	data, _ := json.Marshal(map[string]any{
+		"guid": recordGUID,
+	})
+
+	resp, err := c.send(ctx, &Message{
+		Type:   "request",
+		Action: "getLineItems",
+		Data:   data,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Items []LineItem `json:"items"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return result.Items, nil
+}
+
+// GetRecordByDate finds a journal record by date (YYYY-MM-DD format).
+func (c *Client) GetRecordByDate(ctx context.Context, collection, date string) (*Record, error) {
+	data, _ := json.Marshal(map[string]any{
+		"collection": collection,
+		"date":       date,
+	})
+
+	resp, err := c.send(ctx, &Message{
+		Type:   "request",
+		Action: "getRecordByDate",
+		Data:   data,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var record Record
+	if err := json.Unmarshal(resp.Data, &record); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if record.GUID == "" {
+		return nil, nil // Not found
+	}
+
+	return &record, nil
+}
+
+// =============================================================================
+// Line Item Operations (WRITE path - called via JetStream consumer)
+// =============================================================================
+
+// UpdateLineItem updates a line item's properties (e.g., toggle checked).
+func (c *Client) UpdateLineItem(ctx context.Context, recordGUID, lineItemGUID string, updates map[string]any) error {
+	payload := map[string]any{
+		"record_guid":   recordGUID,
+		"lineitem_guid": lineItemGUID,
+	}
+	for k, v := range updates {
+		payload[k] = v
+	}
+
+	data, _ := json.Marshal(payload)
+	_, err := c.send(ctx, &Message{
+		Type:   "request",
+		Action: "updateLineItem",
+		Data:   data,
+	})
+	return err
+}
+
+// AddLineItem adds a new line item to a record.
+func (c *Client) AddLineItem(ctx context.Context, recordGUID, itemType string, segments []map[string]any) (string, error) {
+	data, _ := json.Marshal(map[string]any{
+		"record_guid": recordGUID,
+		"type":        itemType,
+		"segments":    segments,
+	})
+
+	resp, err := c.send(ctx, &Message{
+		Type:   "request",
+		Action: "addLineItem",
+		Data:   data,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	var result struct {
+		GUID string `json:"guid"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return "", fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return result.GUID, nil
+}
+
 // SendToAll broadcasts a message to all connected Thymer instances (fire-and-forget).
 func (c *Client) SendToAll(msg any) {
 	c.mu.RLock()

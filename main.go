@@ -9,6 +9,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/linux"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
 )
 
 //go:embed all:frontend/dist
@@ -30,7 +31,7 @@ func main() {
 		Title:             "thymer-bar",
 		Width:             1920,
 		Height:            720,
-		StartHidden:       true,  // Start in tray only
+		StartHidden:       false, // Show window on launch
 		HideWindowOnClose: true,  // Hide instead of quit on close
 		AssetServer: &assetserver.Options{
 			Assets: assets,
@@ -44,6 +45,11 @@ func main() {
 		Linux: &linux.Options{
 			WindowIsTranslucent: false,
 			ProgramName:         "thymer-bar",
+		},
+		Mac: &mac.Options{
+			TitleBar:             mac.TitleBarDefault(),
+			WindowIsTranslucent:  false,
+			WebviewIsTransparent: false,
 		},
 	})
 

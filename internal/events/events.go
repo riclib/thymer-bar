@@ -1,0 +1,149 @@
+// Package events provides event publishing and consumption via JetStream.
+package events
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"time"
+
+	"github.com/nats-io/nats.go/jetstream"
+)
+
+// Event represents an event to be processed.
+type Event struct {
+	ID        string         `json:"id"`
+	Type      string         `json:"type"`
+	Timestamp time.Time      `json:"timestamp"`
+	Data      map[string]any `json:"data"`
+}
+
+// Event types for Thymer actions
+const (
+	EventTaskStarted   = "task.started"
+	EventTaskPaused    = "task.paused"
+	EventTaskResumed   = "task.resumed"
+	EventTaskCompleted = "task.completed"
+	EventHabitToggled  = "habit.toggled"
+	EventNoteAdded     = "note.added"
+
+	// Line item operations (daily note tasks)
+	EventLineItemToggle = "lineitem.toggle"
+	EventLineItemAdd    = "lineitem.add"
+	EventLineItemUpdate = "lineitem.update"
+)
+
+// Publisher publishes events to JetStream.
+type Publisher struct {
+	js     jetstream.JetStream
+	stream string
+}
+
+// NewPublisher creates a new event publisher.
+func NewPublisher(js jetstream.JetStream, stream string) *Publisher {
+	return &Publisher{js: js, stream: stream}
+}
+
+// Publish publishes an event to the stream.
+func (p *Publisher) Publish(ctx context.Context, eventType string, data map[string]any) error {
+	event := Event{
+		ID:        fmt.Sprintf("%d", time.Now().UnixNano()),
+		Type:      eventType,
+		Timestamp: time.Now(),
+		Data:      data,
+	}
+
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal event: %w", err)
+	}
+
+	subject := fmt.Sprintf("events.%s", eventType)
+	_, err = p.js.Publish(ctx, subject, payload)
+	if err != nil {
+		return fmt.Errorf("failed to publish event: %w", err)
+	}
+
+	slog.Debug("event published", "type", eventType, "id", event.ID)
+	return nil
+}
+
+// Consumer consumes events from JetStream.
+type Consumer struct {
+	js       jetstream.JetStream
+	stream   string
+	consumer jetstream.Consumer
+	handler  func(context.Context, *Event) error
+	stopCh   chan struct{}
+}
+
+// NewConsumer creates a new event consumer.
+func NewConsumer(js jetstream.JetStream, stream, consumerName string, handler func(context.Context, *Event) error) (*Consumer, error) {
+	// Create or get the consumer
+	consumer, err := js.CreateOrUpdateConsumer(context.Background(), stream, jetstream.ConsumerConfig{
+		Name:          consumerName,
+		Durable:       consumerName,
+		FilterSubject: "events.>",
+		AckPolicy:     jetstream.AckExplicitPolicy,
+		DeliverPolicy: jetstream.DeliverAllPolicy,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create consumer: %w", err)
+	}
+
+	return &Consumer{
+		js:       js,
+		stream:   stream,
+		consumer: consumer,
+		handler:  handler,
+		stopCh:   make(chan struct{}),
+	}, nil
+}
+
+// Start starts consuming events.
+func (c *Consumer) Start(ctx context.Context) error {
+	slog.Info("starting event consumer")
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-c.stopCh:
+			return nil
+		default:
+			// Fetch messages with timeout
+			msgs, err := c.consumer.Fetch(10, jetstream.FetchMaxWait(5*time.Second))
+			if err != nil {
+				// Timeout is expected, continue
+				continue
+			}
+
+			for msg := range msgs.Messages() {
+				var event Event
+				if err := json.Unmarshal(msg.Data(), &event); err != nil {
+					slog.Error("failed to unmarshal event", "error", err)
+					msg.Nak()
+					continue
+				}
+
+				// Process the event
+				if err := c.handler(ctx, &event); err != nil {
+					slog.Error("failed to process event", "type", event.Type, "error", err)
+					// NAK to retry later
+					msg.NakWithDelay(30 * time.Second)
+					continue
+				}
+
+				// Acknowledge successful processing
+				msg.Ack()
+				slog.Debug("event processed", "type", event.Type, "id", event.ID)
+			}
+		}
+	}
+}
+
+// Stop stops the consumer.
+func (c *Consumer) Stop() {
+	close(c.stopCh)
+}

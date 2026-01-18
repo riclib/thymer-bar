@@ -13,28 +13,31 @@ var iconData []byte
 
 // Tray manages the system tray icon and menu.
 type Tray struct {
-	onShow   func()
-	onQuit   func()
-	onSync   func()
+	onDashboard func()
+	onSettings  func()
+	onQuit      func()
+	onSync      func()
 
 	// Menu items (set during onReady)
-	mStatus  *systray.MenuItem
+	mStatus      *systray.MenuItem
 	mConnections *systray.MenuItem
 }
 
 // Config holds tray configuration.
 type Config struct {
-	OnShow func() // Called when "Show" is clicked
-	OnQuit func() // Called when "Quit" is clicked
-	OnSync func() // Called when "Sync All" is clicked
+	OnDashboard func() // Called when "Dashboard" is clicked
+	OnSettings  func() // Called when "Settings" is clicked
+	OnQuit      func() // Called when "Quit" is clicked
+	OnSync      func() // Called when "Sync All" is clicked
 }
 
 // New creates a new tray manager.
 func New(cfg Config) *Tray {
 	return &Tray{
-		onShow: cfg.OnShow,
-		onQuit: cfg.OnQuit,
-		onSync: cfg.OnSync,
+		onDashboard: cfg.OnDashboard,
+		onSettings:  cfg.OnSettings,
+		onQuit:      cfg.OnQuit,
+		onSync:      cfg.OnSync,
 	}
 }
 
@@ -62,8 +65,9 @@ func (t *Tray) onReady() {
 
 	systray.AddSeparator()
 
-	// Actions
-	mShow := systray.AddMenuItem("Manage Plugins", "Open the plugin manager")
+	// Window actions
+	mDashboard := systray.AddMenuItem("Dashboard", "Open dashboard")
+	mSettings := systray.AddMenuItem("Settings", "Open settings")
 	mSync := systray.AddMenuItem("Sync All", "Trigger sync for all sources")
 
 	systray.AddSeparator()
@@ -81,9 +85,13 @@ func (t *Tray) onReady() {
 	go func() {
 		for {
 			select {
-			case <-mShow.ClickedCh:
-				if t.onShow != nil {
-					t.onShow()
+			case <-mDashboard.ClickedCh:
+				if t.onDashboard != nil {
+					t.onDashboard()
+				}
+			case <-mSettings.ClickedCh:
+				if t.onSettings != nil {
+					t.onSettings()
 				}
 			case <-mSync.ClickedCh:
 				if t.onSync != nil {

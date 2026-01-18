@@ -137,6 +137,19 @@ const SyncHubConnect = {
         case 'updateRecord':
           result = await this.handleUpdateRecord(payload, data);
           break;
+        // Daily note / line item operations
+        case 'getTodayJournal':
+          result = await this.handleGetTodayJournal(data);
+          break;
+        case 'getLineItems':
+          result = await this.handleGetLineItems(payload, data);
+          break;
+        case 'updateLineItem':
+          result = await this.handleUpdateLineItem(payload, data);
+          break;
+        case 'addLineItem':
+          result = await this.handleAddLineItem(payload, data);
+          break;
         default:
           throw new Error(`Unknown action: ${action}`);
       }
@@ -377,5 +390,179 @@ const SyncHubConnect = {
     } else if (target.startsWith('http')) {
       window.open(target, '_blank');
     }
+  },
+
+  // ===========================================================================
+  // Daily Note / Line Item Operations
+  // ===========================================================================
+
+  /**
+   * Get or create today's daily note (journal entry).
+   * Returns the record with its line items (tasks).
+   */
+  async handleGetTodayJournal(data) {
+    // Get the Journal collection
+    const collections = await data.getAllCollections();
+    const journalCollection = collections.find((c) => c.getName() === 'Journal');
+    if (!journalCollection) throw new Error('Journal collection not found');
+
+    const records = await journalCollection.getAllRecords();
+
+    // Journal GUIDs end with YYYYMMDD format (no hyphens)
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    let todayRecord = records.find((r) => r.guid.endsWith(today));
+
+    // Fallback: Thymer uses prev day until ~3am
+    if (!todayRecord) {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayStr = yesterday.toISOString().slice(0, 10).replace(/-/g, '');
+      todayRecord = records.find((r) => r.guid.endsWith(yesterdayStr));
+    }
+
+    if (!todayRecord) {
+      throw new Error('No journal entry found for today');
+    }
+
+    // Get line items (with resolved ref titles)
+    const lineItems = await this.extractLineItems(todayRecord, data);
+
+    return {
+      guid: todayRecord.guid,
+      name: todayRecord.getName(),
+      date: today,
+      line_items: lineItems,
+    };
+  },
+
+  /**
+   * Get line items from a record.
+   */
+  async handleGetLineItems(payload, data) {
+    const { guid } = payload;
+    if (!guid) throw new Error('guid required');
+
+    const record = await SyncHubHelpers.findRecordByGUID(data, guid);
+    if (!record) throw new Error(`Record not found: ${guid}`);
+
+    const items = await this.extractLineItems(record, data);
+    return { items };
+  },
+
+  /**
+   * Extract line items from a record into a serializable format.
+   * Converts segments to markdown text with [title](thymer:uuid) links.
+   */
+  async extractLineItems(record, data) {
+    const lineItems = await record.getLineItems();
+    if (!lineItems) return [];
+
+    // Collect all ref GUIDs for batch resolution
+    const refGuids = new Set();
+    for (const item of lineItems) {
+      for (const seg of item.segments || []) {
+        if (seg.type === 'ref' && seg.text?.guid) {
+          refGuids.add(seg.text.guid);
+        }
+      }
+    }
+
+    // Resolve ref titles (cache for efficiency)
+    const refTitles = {};
+    if (data && refGuids.size > 0) {
+      for (const guid of refGuids) {
+        try {
+          const refRecord = await SyncHubHelpers.findRecordByGUID(data, guid);
+          if (refRecord) {
+            refTitles[guid] = refRecord.getName();
+          }
+        } catch (e) {
+          console.warn('[SyncHub] Failed to resolve ref:', guid, e.message);
+        }
+      }
+    }
+
+    return lineItems.map((item) => ({
+      guid: item.guid,
+      parent_guid: item.parent_guid || null,
+      type: item.type || 'bullet',
+      checked: item.checked || false,
+      // Convert segments to markdown text
+      text: this.segmentsToMarkdown(item.segments || [], refTitles),
+    }));
+  },
+
+  /**
+   * Convert segments array to markdown text with thymer: links.
+   */
+  segmentsToMarkdown(segments, refTitles) {
+    let md = '';
+    for (const seg of segments) {
+      if (seg.type === 'text' && typeof seg.text === 'string') {
+        md += seg.text;
+      } else if (seg.type === 'ref' && seg.text?.guid) {
+        const guid = seg.text.guid;
+        const title = refTitles[guid] || 'untitled';
+        md += `[${title}](thymer:${guid})`;
+      }
+    }
+    return md.trim();
+  },
+
+  /**
+   * Update a line item (toggle checked, update text, etc.).
+   */
+  async handleUpdateLineItem(payload, data) {
+    const { record_guid, lineitem_guid, checked, segments } = payload;
+    if (!record_guid || !lineitem_guid) throw new Error('record_guid and lineitem_guid required');
+
+    const record = await SyncHubHelpers.findRecordByGUID(data, record_guid);
+    if (!record) throw new Error(`Record not found: ${record_guid}`);
+
+    const lineItems = await record.getLineItems();
+    const item = lineItems?.find((i) => i.guid === lineitem_guid);
+    if (!item) throw new Error(`Line item not found: ${lineitem_guid}`);
+
+    // Update checked state
+    if (checked !== undefined && item.setChecked) {
+      item.setChecked(checked);
+    }
+
+    // Update segments/text
+    if (segments !== undefined && item.setSegments) {
+      item.setSegments(segments);
+    }
+
+    return { guid: lineitem_guid, success: true };
+  },
+
+  /**
+   * Add a new line item to a record.
+   */
+  async handleAddLineItem(payload, data) {
+    const { record_guid, type, segments, after_guid } = payload;
+    if (!record_guid) throw new Error('record_guid required');
+
+    const record = await SyncHubHelpers.findRecordByGUID(data, record_guid);
+    if (!record) throw new Error(`Record not found: ${record_guid}`);
+
+    // Find the position to insert after
+    let afterItem = null;
+    if (after_guid) {
+      const lineItems = await record.getLineItems();
+      afterItem = lineItems?.find((i) => i.guid === after_guid);
+    }
+
+    // Create the line item
+    const itemType = type || 'task';
+    const newItem = await record.createLineItem(null, afterItem, itemType);
+    if (!newItem) throw new Error('Failed to create line item');
+
+    // Set segments if provided
+    if (segments && newItem.setSegments) {
+      newItem.setSegments(segments);
+    }
+
+    return { guid: newItem.guid };
   },
 };

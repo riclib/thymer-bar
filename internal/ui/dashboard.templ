@@ -1,0 +1,400 @@
+package ui
+
+import (
+	"fmt"
+	"html"
+	"regexp"
+	"time"
+	"github.com/riclib/icon"
+)
+
+// DashboardData contains all data for the dashboard view
+type DashboardData struct {
+	Tasks     []Task
+	Events    []Event
+	Habits    []Habit
+	Stats     Stats
+	Session   *Session
+	Connected bool
+	Date      string // "Sunday, January 18"
+}
+
+// Task represents a task in the queue
+type Task struct {
+	GUID   string
+	Title  string
+	Source string
+	Status string // "pending", "in_progress", "done"
+}
+
+// Event represents a calendar event
+type Event struct {
+	ID       string
+	Title    string
+	Time     string // "2:00 PM"
+	Duration string // "1h"
+	Location string
+}
+
+// Habit represents a trackable habit
+type Habit struct {
+	ID   string
+	Name string
+	Icon string
+	Type string // "virtue" or "vice"
+	Done bool
+}
+
+// Stats represents daily statistics
+type Stats struct {
+	Planned   int
+	Completed int
+	Queued    int
+}
+
+// Session represents the current work session
+type Session struct {
+	Active    bool
+	TaskGUID  string
+	TaskTitle string
+	Elapsed   int // seconds
+}
+
+// Dashboard renders the main dashboard view
+templ Dashboard(data DashboardData) {
+	<div class="dashboard">
+		<!-- TIMELINE -->
+		<div class="db-panel">
+			<div class="db-panel-head">
+				<span class="db-panel-label">Timeline</span>
+				<span class="db-panel-meta">{ data.Date }</span>
+			</div>
+			<div class="db-timeline-wrap">
+				<div class="db-timeline-body">
+					@Timeline(data.Tasks, data.Events)
+				</div>
+			</div>
+		</div>
+
+		<!-- FOCUS -->
+		<div class="db-panel db-focus">
+			@FocusPanel(data.Session, len(data.Tasks))
+		</div>
+
+		<!-- QUEUE -->
+		<div class="db-panel">
+			<div class="db-panel-head">
+				<span class="db-panel-label">Up Next</span>
+				<span class="db-panel-meta">{ fmt.Sprintf("%d tasks", countPending(data.Tasks)) }</span>
+			</div>
+			<div class="db-queue-body">
+				@TaskQueue(data.Tasks, data.Connected)
+			</div>
+		</div>
+
+		<!-- AMBIENT (Today sidebar) -->
+		<div class="db-panel db-ambient">
+			<div class="db-panel-head">
+				<span class="db-panel-label">Today</span>
+				<div class="db-head-actions">
+					@ConnectionBadge(data.Connected)
+					<button class="db-settings-btn" data-action="open-settings" title="Settings">
+						@icon.Settings()
+					</button>
+				</div>
+			</div>
+			<div class="db-ambient-body">
+				@StatsBar(data.Stats)
+				@UpcomingEvents(data.Events)
+				@HabitsList(data.Habits)
+			</div>
+		</div>
+	</div>
+}
+
+// ConnectionBadge shows the Thymer connection status
+templ ConnectionBadge(connected bool) {
+	<div class={ "db-connection", templ.KV("connected", connected) } title={ connectionTitle(connected) }>
+		<span class="db-connection-dot"></span>
+		<span class="db-connection-text">
+			if connected {
+				Connected
+			} else {
+				Offline
+			}
+		</span>
+	</div>
+}
+
+// StatsBar shows daily statistics
+templ StatsBar(stats Stats) {
+	<div class="db-stats">
+		<div class="db-stat" title="Planned tasks">
+			@icon.Clipboard()
+			<span class="db-stat-val">{ itoa(stats.Planned) }</span>
+		</div>
+		<div class="db-stat" title="Completed">
+			@icon.CircleCheck()
+			<span class="db-stat-val good">{ itoa(stats.Completed) }</span>
+		</div>
+		<div class="db-stat" title="Queued">
+			@icon.Clock()
+			<span class="db-stat-val">{ itoa(stats.Queued) }</span>
+		</div>
+	</div>
+}
+
+// Timeline renders the hourly timeline with events
+templ Timeline(tasks []Task, events []Event) {
+	for h := 6; h <= 22; h++ {
+		@TimelineHour(h, tasks, events)
+	}
+}
+
+// TimelineHour renders a single hour row in the timeline
+templ TimelineHour(hour int, tasks []Task, events []Event) {
+	<div class={ "db-hour-row", templ.KV("past", isPast(hour)), templ.KV("now", isNow(hour)) }>
+		<div class="db-hour-label">{ formatHour(hour) }</div>
+		<div class="db-hour-content">
+			for _, e := range eventsAtHour(events, hour) {
+				<div class="db-event-block" data-id={ e.ID }>
+					<span class="db-event-title">{ e.Title }</span>
+					if e.Duration != "" {
+						<span class="db-event-duration">{ e.Duration }</span>
+					}
+				</div>
+			}
+			if isNow(hour) {
+				<div class="db-now-marker"></div>
+			}
+		</div>
+	</div>
+}
+
+// FocusPanel renders the center focus/timer panel
+templ FocusPanel(session *Session, taskCount int) {
+	<div class="db-focus-content" id="focus-panel">
+		if session != nil && session.Active {
+			@ActiveSession(session)
+		} else if taskCount > 0 {
+			@IdleWithTasks()
+		} else {
+			@EmptyState()
+		}
+	</div>
+}
+
+// ActiveSession shows the timer for an active work session
+templ ActiveSession(session *Session) {
+	<div class="db-focus-active">
+		<div class="db-focus-task">{ session.TaskTitle }</div>
+		<div class="db-focus-timer" id="session-timer">{ formatElapsed(session.Elapsed) }</div>
+		<div class="db-focus-actions">
+			<button class="db-focus-btn pause" data-action="pause-session" title="Pause">
+				@icon.Pause()
+			</button>
+			<button class="db-focus-btn complete" data-action="complete-session" data-guid={ session.TaskGUID } title="Complete">
+				@icon.CircleCheck()
+			</button>
+		</div>
+	</div>
+}
+
+// IdleWithTasks shows a prompt to start working
+templ IdleWithTasks() {
+	<div class="db-focus-idle">
+		<div class="db-focus-icon">
+			@icon.Play()
+		</div>
+		<div class="db-focus-prompt">Select a task to start</div>
+	</div>
+}
+
+// EmptyState shows when there are no tasks
+templ EmptyState() {
+	<div class="db-focus-empty">
+		<div class="db-focus-icon muted">
+			@icon.Coffee()
+		</div>
+		<div class="db-focus-prompt muted">No tasks planned</div>
+		<div class="db-focus-hint">Open the Planner to add tasks</div>
+	</div>
+}
+
+// TaskQueue renders the list of tasks
+templ TaskQueue(tasks []Task, connected bool) {
+	if len(tasks) == 0 {
+		<div class="db-queue-empty">
+			if !connected {
+				<div class="db-queue-empty-icon">
+					@icon.Unplug()
+				</div>
+				<p class="db-queue-empty-title">Not connected to Thymer</p>
+				<p class="db-queue-empty-hint">Open Thymer to see today's tasks</p>
+			} else {
+				<div class="db-queue-empty-icon">
+					@icon.ListChecks()
+				</div>
+				<p class="db-queue-empty-title">No tasks planned</p>
+				<p class="db-queue-empty-hint">Use the Planner to add tasks</p>
+			}
+		</div>
+	} else {
+		for _, task := range tasks {
+			if task.Status != "done" {
+				@TaskCard(task)
+			}
+		}
+		// Show completed at the end
+		for _, task := range tasks {
+			if task.Status == "done" {
+				@TaskCard(task)
+			}
+		}
+	}
+}
+
+// TaskCard renders a single task in the queue (styled like sync-manager-prototype)
+templ TaskCard(task Task) {
+	<div
+		class={ "db-task-card", templ.KV("active", task.Status == "in_progress"), templ.KV("done", task.Status == "done") }
+		data-guid={ task.GUID }
+		data-action="select-task"
+	>
+		<div class="db-task-indicator"></div>
+		<div class="db-task-content">
+			<div class="db-task-title">@templ.Raw(renderMarkdownTitle(task.Title))</div>
+			<div class="db-task-source">{ task.Source }</div>
+		</div>
+	</div>
+}
+
+// UpcomingEvents renders the calendar events section
+templ UpcomingEvents(events []Event) {
+	<div class="db-upcoming">
+		<div class="db-section-label">Coming Up</div>
+		if len(events) == 0 {
+			<div class="db-upcoming-empty">No events today</div>
+		} else {
+			for _, event := range events {
+				@EventCard(event)
+			}
+		}
+	</div>
+}
+
+// EventCard renders a single calendar event
+templ EventCard(event Event) {
+	<div class="db-event" data-id={ event.ID }>
+		<div class="db-event-time">{ event.Time }</div>
+		<div class="db-event-info">
+			<div class="db-event-title">{ event.Title }</div>
+			if event.Location != "" {
+				<div class="db-event-location">{ event.Location }</div>
+			}
+		</div>
+	</div>
+}
+
+// HabitsList renders the habits tracking section
+templ HabitsList(habits []Habit) {
+	<div class="db-habits">
+		<div class="db-section-label">Habits</div>
+		for _, habit := range habits {
+			@HabitItem(habit)
+		}
+	</div>
+}
+
+// HabitItem renders a single habit toggle
+templ HabitItem(habit Habit) {
+	<div class={ "db-habit", templ.KV("done", habit.Done), templ.KV("vice", habit.Type == "vice") } data-id={ habit.ID } data-action="toggle-habit">
+		<span class="db-habit-icon">{ habit.Icon }</span>
+		<span class="db-habit-name">{ habit.Name }</span>
+		<div class="db-habit-check">
+			if habit.Done {
+				@icon.CircleCheck()
+			} else {
+				@icon.Circle()
+			}
+		</div>
+	</div>
+}
+
+// Helper functions
+func connectionTitle(connected bool) string {
+	if connected {
+		return "Connected to Thymer"
+	}
+	return "Thymer not connected"
+}
+
+func countPending(tasks []Task) int {
+	count := 0
+	for _, t := range tasks {
+		if t.Status != "done" {
+			count++
+		}
+	}
+	return count
+}
+
+func isPast(hour int) bool {
+	return hour < time.Now().Hour()
+}
+
+func isNow(hour int) bool {
+	return hour == time.Now().Hour()
+}
+
+func formatHour(hour int) string {
+	if hour == 0 {
+		return "12a"
+	} else if hour < 12 {
+		return fmt.Sprintf("%da", hour)
+	} else if hour == 12 {
+		return "12p"
+	}
+	return fmt.Sprintf("%dp", hour-12)
+}
+
+func formatElapsed(seconds int) string {
+	h := seconds / 3600
+	m := (seconds % 3600) / 60
+	s := seconds % 60
+	if h > 0 {
+		return fmt.Sprintf("%d:%02d:%02d", h, m, s)
+	}
+	return fmt.Sprintf("%d:%02d", m, s)
+}
+
+func eventsAtHour(events []Event, hour int) []Event {
+	// TODO: Parse event times and filter by hour
+	// For now return empty - events will be shown in the sidebar
+	return nil
+}
+
+// renderMarkdownTitle converts markdown links to HTML with thymer: links styled
+// Input: "work on [Issue Title](thymer:uuid123)"
+// Output: "work on <a href=\"thymer:uuid123\" class=\"thymer-link\">Issue Title</a>"
+var markdownLinkRe = regexp.MustCompile(`\[([^\]]+)\]\((thymer:[^)]+)\)`)
+
+func renderMarkdownTitle(title string) string {
+	// Escape any HTML in the title first
+	escaped := html.EscapeString(title)
+
+	// Replace markdown links with HTML links
+	result := markdownLinkRe.ReplaceAllStringFunc(escaped, func(match string) string {
+		// Re-match to extract parts (the escaped string has &amp; etc)
+		// So we need to work with the original match
+		parts := markdownLinkRe.FindStringSubmatch(match)
+		if len(parts) != 3 {
+			return match
+		}
+		linkText := parts[1]
+		linkHref := parts[2]
+		return fmt.Sprintf(`<a href="%s" class="thymer-link">%s</a>`, linkHref, linkText)
+	})
+
+	return result
+}
