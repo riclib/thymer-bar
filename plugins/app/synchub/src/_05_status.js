@@ -8,7 +8,7 @@ const SyncHubStatus = {
    */
   create(ui, onClick) {
     return ui.addStatusBarItem({
-      htmlLabel: this.buildLabel('disconnected'),
+      htmlLabel: this.buildLabel('connecting'),
       tooltip: 'SyncHub - Connecting...',
       onClick,
     });
@@ -26,6 +26,7 @@ const SyncHubStatus = {
       connected: 'SyncHub - Connected to thymer-bar',
       disconnected: 'SyncHub - Disconnected (click to retry)',
       connecting: 'SyncHub - Connecting...',
+      error: 'SyncHub - Connection failed (click to retry)',
     };
 
     statusBarItem.setTooltip(tooltips[state] || 'SyncHub');
@@ -33,9 +34,12 @@ const SyncHubStatus = {
 
   /**
    * Build HTML label for status bar.
+   * Uses ti-cloud for all states, CSS classes handle color:
+   * - connected: green
+   * - connecting: default/gray
+   * - disconnected/error: amber
    */
   buildLabel(state) {
-    const icon = state === 'disconnected' ? 'ti-cloud-off' : 'ti-cloud';
-    return `<span class="ti ${icon} synchub-status ${state}"></span>`;
+    return `<span class="ti ti-cloud synchub-status ${state}"></span>`;
   },
 };

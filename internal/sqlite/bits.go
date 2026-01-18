@@ -430,6 +430,36 @@ func (d *DB) ClearAllRefs(ctx context.Context) error {
 	return err
 }
 
+// ClearBitsForSource clears bits and refs for a specific source/system.
+func (d *DB) ClearBitsForSource(ctx context.Context, system string) error {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Delete refs for bits from this system
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM refs WHERE master_uri IN (
+			SELECT master_uri FROM bits WHERE master_system = ?
+		)
+	`, system); err != nil {
+		return err
+	}
+
+	// Delete bits from this system
+	if _, err := tx.ExecContext(ctx, `DELETE FROM bits WHERE master_system = ?`, system); err != nil {
+		return err
+	}
+
+	// Delete sync cursor for this system
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sync_cursors WHERE source = ?`, system); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
 // CountBits returns the number of bits in the database.
 func (d *DB) CountBits(ctx context.Context) (int, error) {
 	var count int

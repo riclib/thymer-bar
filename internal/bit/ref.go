@@ -61,10 +61,4 @@ func (r *Ref) MarkPulled(hash string) {
 	r.UpdatedAt = time.Now()
 }
 
-// Systems constants for well-known external systems.
-const (
-	SystemGitHub   = "github"
-	SystemThymer   = "thymer"
-	SystemObsidian = "obsidian"
-	SystemLocal    = "local"
-)
+// Note: System constants are defined in bit.go

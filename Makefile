@@ -1,4 +1,4 @@
-.PHONY: all setup build dev clean test lint submodules check install test-ws plugins
+.PHONY: all setup build dev clean test lint submodules check install install-llog launch test-ws plugins
 
 # Default target
 all: setup build
@@ -72,12 +72,27 @@ build-all: check
 	wails build -platform linux/amd64
 	wails build -platform windows/amd64
 
-# Install to system (Linux)
+# Install thymer-bar to system
 install: build
 	@echo "Installing to ~/.local/bin/thymer-bar"
 	@mkdir -p ~/.local/bin
 	@cp build/bin/thymer-bar ~/.local/bin/
 	@echo "✓ Installed. Make sure ~/.local/bin is in your PATH"
+
+# Build and launch (macOS) - kills existing instance first
+launch: build
+	@echo "Killing existing thymer-bar..."
+	@-pkill -x thymer-bar 2>/dev/null || true
+	@echo "Waiting for process to terminate..."
+	@sleep 5
+	@echo "Launching thymer-bar..."
+	@open build/bin/thymer-bar.app
+
+# Build and install llog CLI
+install-llog:
+	@echo "Building llog..."
+	@go build -o ~/.local/bin/llog ./cmd/llog
+	@echo "✓ Installed llog to ~/.local/bin/llog"
 
 # ============================================================================
 # Cleanup
@@ -129,7 +144,9 @@ help:
 	@echo "Build:"
 	@echo "  make build          - Build production binary (includes plugins)"
 	@echo "  make build-debug    - Build with debug info"
-	@echo "  make install        - Build and install to ~/.local/bin"
+	@echo "  make launch         - Build, kill existing, and launch (macOS)"
+	@echo "  make install        - Build and install thymer-bar to ~/.local/bin"
+	@echo "  make install-llog   - Build and install llog to ~/.local/bin"
 	@echo ""
 	@echo "Utilities:"
 	@echo "  make ports          - Check if thymer-bar ports are in use"

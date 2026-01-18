@@ -1,56 +1,52 @@
 {
-  "ver": 1,
+  "ver": 3,
   "name": "Calendar",
-  "icon": "ti-calendar-event",
+  "icon": "ti-calendar",
   "home": false,
   "item_name": "Event",
-  "description": "Events and meetings from all your calendars",
+  "description": "Calendar events from any source",
   "show_sidebar_items": true,
   "show_cmdpal_items": true,
   "page_field_ids": [
-    "source",
-    "start_time",
-    "end_time",
+    "time_period",
+    "calendar",
     "location",
-    "attendees"
+    "status"
   ],
   "fields": [
     {
+      "id": "external_id",
+      "label": "External ID",
+      "icon": "ti-id",
+      "type": "text",
+      "read_only": true,
+      "active": false
+    },
+    {
+      "id": "time_period",
+      "label": "Time",
+      "icon": "ti-clock",
+      "type": "datetime",
+      "read_only": false,
+      "active": true
+    },
+    {
       "id": "source",
       "label": "Source",
-      "icon": "ti-cloud",
+      "icon": "ti-anchor",
       "type": "choice",
-      "read_only": false,
+      "read_only": true,
       "active": true,
       "choices": [
-        {
-          "id": "google",
-          "label": "Google",
-          "color": "9",
-          "active": true
-        },
-        {
-          "id": "outlook",
-          "label": "Outlook",
-          "color": "6",
-          "active": true
-        },
-        {
-          "id": "ical",
-          "label": "iCal",
-          "color": "3",
-          "active": true
-        },
-        {
-          "id": "manual",
-          "label": "Manual",
-          "color": "1",
-          "active": true
-        }
+        {"id": "google", "label": "Google", "color": "3", "active": true},
+        {"id": "outlook", "label": "Outlook", "color": "4", "active": true},
+        {"id": "proton", "label": "Proton", "color": "12", "active": true},
+        {"id": "ical", "label": "iCal", "color": "6", "active": true},
+        {"id": "manual", "label": "Manual", "color": "1", "active": true}
       ]
     },
     {
-      "id": "calendar_name",
+      "id": "calendar",
       "label": "Calendar",
       "icon": "ti-calendar",
       "type": "text",
@@ -58,42 +54,35 @@
       "active": true
     },
     {
-      "id": "start_time",
-      "label": "Start",
-      "icon": "ti-clock",
-      "type": "datetime",
+      "id": "status",
+      "label": "Status",
+      "icon": "ti-circle",
+      "type": "choice",
       "read_only": false,
-      "active": true
+      "active": true,
+      "choices": [
+        {"id": "confirmed", "label": "Confirmed", "color": "2", "active": true},
+        {"id": "tentative", "label": "Tentative", "color": "3", "active": true},
+        {"id": "cancelled", "label": "Cancelled", "color": "5", "active": true}
+      ]
     },
     {
-      "id": "end_time",
-      "label": "End",
-      "icon": "ti-clock-off",
-      "type": "datetime",
-      "read_only": false,
-      "active": true
-    },
-    {
-      "id": "all_day",
-      "label": "All Day",
-      "icon": "ti-sun",
-      "type": "checkbox",
-      "read_only": false,
-      "active": true
+      "id": "timing",
+      "label": "Timing",
+      "icon": "ti-clock-2",
+      "type": "choice",
+      "read_only": true,
+      "active": true,
+      "choices": [
+        {"id": "upcoming", "label": "Upcoming", "color": "2", "active": true},
+        {"id": "past", "label": "Past", "color": "1", "active": true}
+      ]
     },
     {
       "id": "location",
       "label": "Location",
       "icon": "ti-map-pin",
       "type": "text",
-      "read_only": false,
-      "active": true
-    },
-    {
-      "id": "meeting_url",
-      "label": "Meeting URL",
-      "icon": "ti-video",
-      "type": "url",
       "read_only": false,
       "active": true
     },
@@ -106,26 +95,88 @@
       "active": true
     },
     {
-      "id": "recurring",
-      "label": "Recurring",
-      "icon": "ti-repeat",
-      "type": "checkbox",
+      "id": "meet_link",
+      "label": "Meet Link",
+      "icon": "ti-video",
+      "type": "url",
       "read_only": false,
       "active": true
     },
     {
-      "id": "external_id",
-      "label": "External ID",
-      "icon": "ti-id",
-      "type": "text",
+      "id": "url",
+      "label": "Event URL",
+      "icon": "ti-link",
+      "type": "url",
       "read_only": true,
       "active": true
     },
     {
-      "id": "tags",
-      "label": "Tags",
-      "icon": "ti-tags",
-      "type": "tags",
+      "id": "prep",
+      "label": "Prep Done",
+      "icon": "ti-checkbox",
+      "type": "choice",
+      "read_only": false,
+      "active": true,
+      "choices": [
+        {"id": "yes", "label": "Yes", "color": "2", "active": true},
+        {"id": "no", "label": "No", "color": "4", "active": true}
+      ]
+    },
+    {
+      "id": "energy",
+      "label": "Energy",
+      "icon": "ti-bolt",
+      "type": "choice",
+      "read_only": false,
+      "active": true,
+      "choices": [
+        {"id": "high", "label": "High", "color": "5", "active": true},
+        {"id": "medium", "label": "Medium", "color": "3", "active": true},
+        {"id": "low", "label": "Low", "color": "2", "active": true}
+      ]
+    },
+    {
+      "id": "outcome",
+      "label": "Outcome",
+      "icon": "ti-star",
+      "type": "choice",
+      "read_only": false,
+      "active": true,
+      "choices": [
+        {"id": "productive", "label": "Productive", "color": "2", "active": true},
+        {"id": "neutral", "label": "Neutral", "color": "3", "active": true},
+        {"id": "waste", "label": "Waste", "color": "5", "active": true}
+      ]
+    },
+    {
+      "id": "followup",
+      "label": "Needs Follow-up",
+      "icon": "ti-arrow-forward",
+      "type": "choice",
+      "read_only": false,
+      "active": true,
+      "choices": [
+        {"id": "yes", "label": "Yes", "color": "5", "active": true},
+        {"id": "no", "label": "No", "color": "4", "active": true}
+      ]
+    },
+    {
+      "id": "all_day",
+      "label": "All Day",
+      "icon": "ti-calendar-check",
+      "type": "choice",
+      "read_only": true,
+      "active": false,
+      "choices": [
+        {"id": "yes", "label": "Yes", "color": "2", "active": true},
+        {"id": "no", "label": "No", "color": "4", "active": true}
+      ]
+    },
+    {
+      "id": "banner",
+      "label": "Banner",
+      "icon": "ti-photo",
+      "type": "banner",
       "read_only": false,
       "active": true
     }
@@ -133,53 +184,79 @@
   "views": [
     {
       "id": "VCAL001",
-      "label": "Upcoming",
-      "description": "Future events by date",
-      "icon": "ti-calendar-time",
-      "type": "table",
+      "label": "Calendar",
+      "description": "Calendar view",
+      "icon": "",
+      "type": "calendar",
       "shown": true,
       "read_only": false,
-      "field_ids": ["start_time", "end_time", "location", "source"],
-      "sort_field_id": "start_time",
+      "field_ids": ["time_period", "calendar"],
+      "date_field_id": "time_period",
+      "sort_field_id": "time_period",
       "sort_dir": "asc",
-      "group_by_field_id": null,
       "opts": {}
     },
     {
       "id": "VCAL002",
-      "label": "By Calendar",
-      "description": "Events grouped by calendar",
-      "icon": "ti-layout-board",
-      "type": "board",
+      "label": "Upcoming",
+      "description": "Table of upcoming events",
+      "icon": "",
+      "type": "table",
       "shown": true,
       "read_only": false,
-      "field_ids": ["start_time", "location"],
-      "sort_field_id": "start_time",
+      "field_ids": ["time_period", "location", "prep", "calendar", "timing"],
+      "sort_field_id": "time_period",
       "sort_dir": "asc",
-      "group_by_field_id": "source",
       "opts": {}
     },
     {
       "id": "VCAL003",
-      "label": "Past",
-      "description": "Past events",
-      "icon": "ti-history",
+      "label": "By Calendar",
+      "description": "Events grouped by calendar",
+      "icon": "",
+      "type": "board",
+      "shown": true,
+      "read_only": false,
+      "field_ids": ["time_period", "status"],
+      "group_by_field_id": "calendar",
+      "sort_field_id": "time_period",
+      "sort_dir": "asc",
+      "opts": {}
+    },
+    {
+      "id": "VCAL004",
+      "label": "By Source",
+      "description": "Events grouped by sync source",
+      "icon": "",
+      "type": "board",
+      "shown": true,
+      "read_only": false,
+      "field_ids": ["time_period", "calendar"],
+      "group_by_field_id": "source",
+      "sort_field_id": "time_period",
+      "sort_dir": "asc",
+      "opts": {}
+    },
+    {
+      "id": "VCAL005",
+      "label": "Review",
+      "description": "Track meeting outcomes",
+      "icon": "",
       "type": "table",
       "shown": true,
       "read_only": false,
-      "field_ids": ["start_time", "end_time", "location", "attendees"],
-      "sort_field_id": "start_time",
+      "field_ids": ["time_period", "energy", "outcome", "followup"],
+      "sort_field_id": "time_period",
       "sort_dir": "desc",
-      "group_by_field_id": null,
       "opts": {}
     }
   ],
   "sidebar_record_sort_dir": "asc",
-  "sidebar_record_sort_field_id": "start_time",
+  "sidebar_record_sort_field_id": "time_period",
   "managed": {
-    "fields": true,
-    "views": true,
-    "sidebar": true
+    "fields": false,
+    "views": false,
+    "sidebar": false
   },
   "custom": {}
 }

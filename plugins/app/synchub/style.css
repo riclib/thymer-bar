@@ -1,13 +1,14 @@
-/* Sync Hub v22 */
+/* Sync Hub v23 */
 /* SyncHub Status Bar Styles */
 
 @keyframes synchub-pulse {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 0.9; }
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
 }
 
 .synchub-status {
   font-size: 16px;
+  cursor: pointer;
 }
 
 .synchub-status.connected {
@@ -15,10 +16,11 @@
 }
 
 .synchub-status.connecting {
-  color: #fbbf24;
-  animation: synchub-pulse 1s ease-in-out infinite;
+  color: #94a3b8;
+  animation: synchub-pulse 1.5s ease-in-out infinite;
 }
 
-.synchub-status.disconnected {
-  opacity: 0.4;
+.synchub-status.disconnected,
+.synchub-status.error {
+  color: #f59e0b;
 }

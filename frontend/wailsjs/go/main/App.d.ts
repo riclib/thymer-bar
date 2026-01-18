@@ -42,6 +42,8 @@ export function Greet(arg1:string):Promise<string>;
 
 export function HasGitHubToken():Promise<boolean>;
 
+export function HasGoogleCredentials():Promise<boolean>;
+
 export function HideWindow():Promise<void>;
 
 export function InstallPlugin(arg1:string):Promise<void>;
@@ -50,7 +52,11 @@ export function RefreshPluginList():Promise<string>;
 
 export function RerenderAll():Promise<void>;
 
+export function RerenderSource(arg1:string):Promise<void>;
+
 export function ResyncAll():Promise<void>;
+
+export function ResyncSource(arg1:string):Promise<void>;
 
 export function SetDevMode(arg1:boolean):Promise<void>;
 
@@ -61,6 +67,8 @@ export function SetGitHubRepos(arg1:Array<string>):Promise<void>;
 export function SetGitHubToken(arg1:string):Promise<void>;
 
 export function SetGoogleCalendars(arg1:Array<string>):Promise<void>;
+
+export function SetGoogleCredentials(arg1:string):Promise<void>;
 
 export function SetSourceEnabled(arg1:string,arg2:boolean):Promise<void>;
 

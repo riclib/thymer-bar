@@ -50,7 +50,10 @@ const (
 	GitHubToken   = "github-token"
 	LinearToken   = "linear-token"
 	ReadwiseToken = "readwise-token"
-	CalendarOAuth = "calendar-oauth" // JSON blob for OAuth tokens
+
+	// Google OAuth (stored separately for flexibility)
+	GoogleCredentials = "google-credentials" // JSON from Cloud Console
+	GoogleOAuthToken  = "google-oauth-token" // Refresh token after auth
 )
 
 // KnownKeys returns all well-known secret keys for listing/validation.
@@ -59,6 +62,7 @@ func KnownKeys() []string {
 		GitHubToken,
 		LinearToken,
 		ReadwiseToken,
-		CalendarOAuth,
+		GoogleCredentials,
+		GoogleOAuthToken,
 	}
 }

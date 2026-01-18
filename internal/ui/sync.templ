@@ -256,11 +256,11 @@ templ SyncInfoSource(s SyncSource) {
 					<span>View History</span>
 				</button>
 				<div class="sm-btn-row">
-					<button class="sm-btn sm-btn-half" data-action="resync-all" title="Clear all data and fetch everything fresh">
+					<button class="sm-btn sm-btn-half" data-action="resync-source" data-source={ s.ID } title="Clear and re-fetch this source">
 						@icon.Trash()
 						<span>Full Resync</span>
 					</button>
-					<button class="sm-btn sm-btn-half" data-action="rerender-all" title="Re-push all data to Thymer">
+					<button class="sm-btn sm-btn-half" data-action="rerender-source" data-source={ s.ID } title="Re-push this source to Thymer">
 						@icon.Repeat()
 						<span>Rerender</span>
 					</button>

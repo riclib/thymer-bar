@@ -19,9 +19,14 @@ import {
     SyncNow,
     SyncAll,
     ResyncAll,
+    ResyncSource,
     RerenderAll,
+    RerenderSource,
     GetGitHubConfigHTML,
     SetGitHubRepos,
+    SetGitHubToken,
+    SetGoogleCredentials,
+    HasGoogleCredentials,
     GetGoogleCalendarConfigHTML,
     SetGoogleCalendars
 } from '../wailsjs/go/main/App';
@@ -223,8 +228,14 @@ function bindEvents() {
             case 'resync-all':
                 await handleResyncAll(target);
                 break;
+            case 'resync-source':
+                await handleResyncSource(sourceId, target);
+                break;
             case 'rerender-all':
                 await handleRerenderAll(target);
+                break;
+            case 'rerender-source':
+                await handleRerenderSource(sourceId, target);
                 break;
             case 'configure':
                 await handleConfigure(sourceId);
@@ -450,6 +461,40 @@ async function handleDeselectSource() {
 }
 
 async function handleConnect(sourceId, btn) {
+    // For GitHub, show token input dialog
+    if (sourceId === 'github') {
+        showTokenDialog('github', 'GitHub Personal Access Token',
+            'Create a token at GitHub → Settings → Developer settings → Personal access tokens (classic) with "repo" scope.',
+            'ghp_xxxxxxxxxxxx'
+        );
+        return;
+    }
+
+    // For Google services (Calendar, People), show JSON credentials dialog
+    if (sourceId === 'google-calendar' || sourceId === 'google-people') {
+        // Check if credentials are already configured
+        const hasCredentials = await HasGoogleCredentials();
+        if (hasCredentials) {
+            // Credentials exist, just start OAuth flow
+            btn.disabled = true;
+            btn.textContent = 'Connecting...';
+            try {
+                await ConnectSource(sourceId);
+                const serviceName = sourceId === 'google-calendar' ? 'Google Calendar' : 'Google People';
+                showToast(`Connected to ${serviceName}`, 'success');
+                await init();
+            } catch (err) {
+                showToast(`${err}`, 'error');
+            }
+            btn.disabled = false;
+            btn.textContent = 'Connect';
+        } else {
+            // Need credentials first
+            showGoogleCredentialsDialog();
+        }
+        return;
+    }
+
     btn.disabled = true;
     const originalText = btn.textContent;
     btn.textContent = 'Connecting...';
@@ -471,6 +516,184 @@ async function handleConnect(sourceId, btn) {
 
     btn.disabled = false;
     btn.textContent = originalText;
+}
+
+function showTokenDialog(sourceId, title, hint, placeholder) {
+    // Create overlay
+    const overlay = document.createElement('div');
+    overlay.className = 'sm-overlay';
+
+    // Create dialog
+    const dialog = document.createElement('div');
+    dialog.className = 'sm-config-panel sm-token-dialog';
+    dialog.innerHTML = `
+        <div class="sm-config-header">
+            <h3>${title}</h3>
+            <button class="sm-config-close" data-action="close-token">&times;</button>
+        </div>
+        <div class="sm-config-body">
+            <p class="sm-token-hint">${hint}</p>
+            <input type="password" class="sm-token-input" placeholder="${placeholder}" autocomplete="off" spellcheck="false">
+            <div class="sm-token-actions">
+                <button class="sm-btn-small" data-action="close-token">Cancel</button>
+                <button class="sm-btn-small primary" data-action="save-token" data-source="${sourceId}">Connect</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+    document.body.appendChild(dialog);
+
+    const input = dialog.querySelector('.sm-token-input');
+    input.focus();
+
+    // Handle Enter key
+    input.addEventListener('keydown', async (e) => {
+        if (e.key === 'Enter') {
+            await saveToken(sourceId, input.value);
+        } else if (e.key === 'Escape') {
+            closeTokenDialog();
+        }
+    });
+
+    // Handle clicks
+    overlay.addEventListener('click', closeTokenDialog);
+    dialog.addEventListener('click', async (e) => {
+        const target = e.target.closest('[data-action]');
+        if (!target) return;
+
+        const action = target.dataset.action;
+        if (action === 'close-token') {
+            closeTokenDialog();
+        } else if (action === 'save-token') {
+            await saveToken(target.dataset.source, input.value);
+        }
+    });
+}
+
+function closeTokenDialog() {
+    const overlay = document.querySelector('.sm-overlay');
+    const dialog = document.querySelector('.sm-token-dialog');
+    if (overlay) overlay.remove();
+    if (dialog) dialog.remove();
+}
+
+function showGoogleCredentialsDialog() {
+    // Create overlay
+    const overlay = document.createElement('div');
+    overlay.className = 'sm-overlay';
+
+    // Create dialog
+    const dialog = document.createElement('div');
+    dialog.className = 'sm-config-panel sm-token-dialog sm-google-dialog';
+    dialog.innerHTML = `
+        <div class="sm-config-header">
+            <h3>Google Cloud Credentials</h3>
+            <button class="sm-config-close" data-action="close-google">&times;</button>
+        </div>
+        <div class="sm-config-body">
+            <p class="sm-token-hint">
+                Paste the contents of your OAuth credentials JSON file from Google Cloud Console.
+                <br><br>
+                <strong>Setup:</strong> Google Cloud Console → APIs & Services → Credentials → Create OAuth client ID → Desktop app → Download JSON
+            </p>
+            <textarea class="sm-json-input" placeholder='{"installed":{"client_id":"...","client_secret":"..."}}'></textarea>
+            <div class="sm-token-actions">
+                <button class="sm-btn-small" data-action="close-google">Cancel</button>
+                <button class="sm-btn-small primary" data-action="save-google">Connect</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+    document.body.appendChild(dialog);
+
+    const textarea = dialog.querySelector('.sm-json-input');
+    textarea.focus();
+
+    // Handle Escape key
+    textarea.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            closeGoogleDialog();
+        }
+    });
+
+    // Handle clicks
+    overlay.addEventListener('click', closeGoogleDialog);
+    dialog.addEventListener('click', async (e) => {
+        const target = e.target.closest('[data-action]');
+        if (!target) return;
+
+        const action = target.dataset.action;
+        if (action === 'close-google') {
+            closeGoogleDialog();
+        } else if (action === 'save-google') {
+            await saveGoogleCredentials(textarea.value);
+        }
+    });
+}
+
+function closeGoogleDialog() {
+    const overlay = document.querySelector('.sm-overlay');
+    const dialog = document.querySelector('.sm-google-dialog');
+    if (overlay) overlay.remove();
+    if (dialog) dialog.remove();
+}
+
+async function saveGoogleCredentials(jsonStr) {
+    if (!jsonStr.trim()) {
+        showToast('Please paste your credentials JSON', 'error');
+        return;
+    }
+
+    const saveBtn = document.querySelector('[data-action="save-google"]');
+    if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Connecting...';
+    }
+
+    try {
+        await SetGoogleCredentials(jsonStr.trim());
+        showToast('Connected to Google', 'success');
+        closeGoogleDialog();
+        await init(); // Refresh the view
+    } catch (err) {
+        showToast(`${err}`, 'error');
+        if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Connect';
+        }
+    }
+}
+
+async function saveToken(sourceId, token) {
+    if (!token.trim()) {
+        showToast('Please enter a token', 'error');
+        return;
+    }
+
+    const saveBtn = document.querySelector('[data-action="save-token"]');
+    if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Validating...';
+    }
+
+    try {
+        if (sourceId === 'github') {
+            await SetGitHubToken(token.trim());
+        }
+        // Add other sources here as needed
+
+        showToast(`Connected to ${sourceId}`, 'success');
+        closeTokenDialog();
+        await init(); // Refresh the view
+    } catch (err) {
+        showToast(`${err}`, 'error');
+        if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Connect';
+        }
+    }
 }
 
 async function handleDisconnect(sourceId, btn) {
@@ -573,6 +796,59 @@ async function handleRerenderAll(btn) {
         await RerenderAll();
         showToast('All items re-rendered to Thymer', 'success');
         await init(); // Refresh view
+    } catch (err) {
+        showToast(`Rerender failed: ${err}`, 'error');
+    }
+
+    btn.disabled = false;
+    if (btn.querySelector('span')) {
+        btn.querySelector('span').textContent = originalText;
+    }
+}
+
+async function handleResyncSource(sourceId, btn) {
+    // Confirm before clearing source data
+    if (!confirm(`This will clear all data for ${sourceId} and fetch everything fresh. Continue?`)) {
+        return;
+    }
+
+    btn.disabled = true;
+    const originalText = btn.querySelector('span')?.textContent || 'Full Resync';
+    if (btn.querySelector('span')) {
+        btn.querySelector('span').textContent = 'Clearing & Syncing...';
+    }
+
+    try {
+        await ResyncSource(sourceId);
+        showToast(`Full resync complete for ${sourceId}`, 'success');
+        // Refresh info panel
+        if (selectedSourceId === sourceId) {
+            const html = await GetSyncSourceInfoHTML(sourceId);
+            const infoPanel = document.getElementById('sync-info-panel');
+            if (infoPanel && html) {
+                infoPanel.innerHTML = html;
+            }
+        }
+    } catch (err) {
+        showToast(`Resync failed: ${err}`, 'error');
+    }
+
+    btn.disabled = false;
+    if (btn.querySelector('span')) {
+        btn.querySelector('span').textContent = originalText;
+    }
+}
+
+async function handleRerenderSource(sourceId, btn) {
+    btn.disabled = true;
+    const originalText = btn.querySelector('span')?.textContent || 'Rerender';
+    if (btn.querySelector('span')) {
+        btn.querySelector('span').textContent = 'Rendering...';
+    }
+
+    try {
+        await RerenderSource(sourceId);
+        showToast(`Re-rendered ${sourceId} to Thymer`, 'success');
     } catch (err) {
         showToast(`Rerender failed: ${err}`, 'error');
     }

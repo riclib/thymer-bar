@@ -54,7 +54,6 @@ const CapturesHelpers = {
   },
 };
 
-
 // === _10_tools.js ===
 /**
  * Captures Collection Tools
@@ -154,7 +153,6 @@ const CapturesTools = {
   },
 };
 
-
 // === _99_plugin.js ===
 /**
  * Captures Collection Plugin
@@ -239,5 +237,4 @@ class Plugin extends CollectionPlugin {
     console.log('[Captures] Registered collection tools');
   }
 }
-
 

@@ -1,4 +1,4 @@
-/* Calendar v1 - Generated from src/ - DO NOT EDIT DIRECTLY */
+/* Calendar v3 - Generated from src/ - DO NOT EDIT DIRECTLY */
 /* Run: make plugins */
 
 // === _00_helpers.js ===
@@ -70,7 +70,6 @@ const CalendarHelpers = {
     return start.toDateString() === today.toDateString();
   },
 };
-
 
 // === _10_tools.js ===
 /**
@@ -208,7 +207,6 @@ const CalendarTools = {
   },
 };
 
-
 // === _99_plugin.js ===
 /**
  * Calendar Collection Plugin
@@ -302,5 +300,4 @@ class Plugin extends CollectionPlugin {
     console.log('[Calendar] Registered collection tools');
   }
 }
-
 

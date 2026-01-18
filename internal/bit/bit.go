@@ -65,6 +65,26 @@ func BuildLocalURI(id string) string {
 	return fmt.Sprintf("local://bits/%s", id)
 }
 
+// BuildCalendarURI creates a URI for a Google Calendar event.
+func BuildCalendarURI(calendarID, eventID string) string {
+	return fmt.Sprintf("google-calendar://%s/events/%s", calendarID, eventID)
+}
+
+// BuildPeopleURI creates a URI for a Google People contact.
+func BuildPeopleURI(resourceName string) string {
+	// resourceName is like "people/c12345"
+	return fmt.Sprintf("google-people://%s", resourceName)
+}
+
+// System constants for MasterSystem field.
+const (
+	SystemGitHub   = "github"
+	SystemCalendar = "google-calendar"
+	SystemPeople   = "google-people"
+	SystemThymer   = "thymer"
+	SystemLocal    = "local"
+)
+
 // ComputeHash computes content hash for change detection.
 // Hash includes frontmatter + content to detect any meaningful change.
 func (b *Bit) ComputeHash() string {
@@ -127,6 +147,34 @@ func (b *Bit) GetStrings(name string) []string {
 		return result
 	}
 	return nil
+}
+
+// GetBool returns a frontmatter field as bool, or false if not present/not bool.
+func (b *Bit) GetBool(name string) bool {
+	if v, ok := b.Frontmatter[name].(bool); ok {
+		return v
+	}
+	return false
+}
+
+// GetTime returns a frontmatter field as time.Time, or zero time if not present/not time.
+func (b *Bit) GetTime(name string) time.Time {
+	switch v := b.Frontmatter[name].(type) {
+	case time.Time:
+		return v
+	case string:
+		// Try to parse common time formats
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			return t
+		}
+		if t, err := time.Parse("2006-01-02T15:04:05Z", v); err == nil {
+			return t
+		}
+		if t, err := time.Parse("2006-01-02", v); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
 }
 
 // Set sets a frontmatter field.

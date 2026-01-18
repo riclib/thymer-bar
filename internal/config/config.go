@@ -7,7 +7,9 @@ import (
 
 // Config holds all application configuration.
 type Config struct {
-	GitHub GitHubConfig `json:"github"`
+	GitHub   GitHubConfig   `json:"github"`
+	Calendar CalendarConfig `json:"calendar"`
+	People   PeopleConfig   `json:"people"`
 }
 
 // GitHubConfig holds GitHub sync settings.
@@ -15,6 +17,19 @@ type Config struct {
 type GitHubConfig struct {
 	Enabled bool     `json:"enabled"`
 	Repos   []string `json:"repos"` // "owner/repo" format
+}
+
+// CalendarConfig holds Google Calendar sync settings.
+// OAuth credentials and tokens are stored in system keychain.
+type CalendarConfig struct {
+	Enabled   bool     `json:"enabled"`
+	Calendars []string `json:"calendars"` // Calendar IDs (empty = primary only)
+}
+
+// PeopleConfig holds Google People (Contacts) sync settings.
+// OAuth credentials and tokens are stored in system keychain.
+type PeopleConfig struct {
+	Enabled bool `json:"enabled"`
 }
 
 // Load reads config from disk. Returns empty config if file doesn't exist.

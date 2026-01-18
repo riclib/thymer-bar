@@ -1,3 +1,6 @@
 [submodule "reference/thymer-sdk"]
 	path = reference/thymer-sdk
 	url = https://github.com/thymerapp/thymer-plugin-sdk
+[submodule "reference/thymer-synchub"]
+	path = reference/thymer-synchub
+	url = https://github.com/riclib/thymer-synchub

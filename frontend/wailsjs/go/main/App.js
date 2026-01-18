@@ -82,6 +82,10 @@ export function HasGitHubToken() {
   return window['go']['main']['App']['HasGitHubToken']();
 }
 
+export function HasGoogleCredentials() {
+  return window['go']['main']['App']['HasGoogleCredentials']();
+}
+
 export function HideWindow() {
   return window['go']['main']['App']['HideWindow']();
 }
@@ -98,8 +102,16 @@ export function RerenderAll() {
   return window['go']['main']['App']['RerenderAll']();
 }
 
+export function RerenderSource(arg1) {
+  return window['go']['main']['App']['RerenderSource'](arg1);
+}
+
 export function ResyncAll() {
   return window['go']['main']['App']['ResyncAll']();
+}
+
+export function ResyncSource(arg1) {
+  return window['go']['main']['App']['ResyncSource'](arg1);
 }
 
 export function SetDevMode(arg1) {
@@ -120,6 +132,10 @@ export function SetGitHubToken(arg1) {
 
 export function SetGoogleCalendars(arg1) {
   return window['go']['main']['App']['SetGoogleCalendars'](arg1);
+}
+
+export function SetGoogleCredentials(arg1) {
+  return window['go']['main']['App']['SetGoogleCredentials'](arg1);
 }
 
 export function SetSourceEnabled(arg1, arg2) {

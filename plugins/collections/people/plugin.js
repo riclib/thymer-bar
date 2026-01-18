@@ -67,7 +67,6 @@ const PeopleHelpers = {
   },
 };
 
-
 // === _10_tools.js ===
 /**
  * People Collection Tools
@@ -194,7 +193,6 @@ const PeopleTools = {
   },
 };
 
-
 // === _99_plugin.js ===
 /**
  * People Collection Plugin
@@ -293,5 +291,4 @@ class Plugin extends CollectionPlugin {
     console.log('[People] Registered collection tools');
   }
 }
-
 

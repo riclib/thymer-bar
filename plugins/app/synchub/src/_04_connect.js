@@ -33,20 +33,24 @@ const SyncHubConnect = {
         if (onConnected) onConnected();
       };
 
-      ws.onclose = () => {
+      ws.onclose = (event) => {
         window._syncHubWS = null;
-        updateStatus('disconnected');
+        // Use 'error' if we never connected (code 1006 = abnormal closure)
+        // Use 'disconnected' if we were previously connected
+        const wasConnected = event.wasClean || event.code === 1000;
+        updateStatus(wasConnected ? 'disconnected' : 'error');
         scheduleReconnect();
       };
 
       ws.onerror = () => {
-        // Silent - status bar shows connection state
+        // Error state will be set in onclose
       };
 
       ws.onmessage = (event) => {
         if (onMessage) onMessage(event.data);
       };
     } catch (err) {
+      updateStatus('error');
       scheduleReconnect();
     }
   },

@@ -124,13 +124,11 @@ type Event struct {
 
 ## Reference Code
 
-Look at these directories for patterns to port:
-- `../thymer-synchub/desktop/` - Existing thymer-bar (Go, WebSocket, MCP)
-- `../thymer-synchub/plugins/` - Sync logic (JS, to be ported)
-- `../thymer-synchub/plannerhub/` - PlannerHub UI (JS, to be ported)
-- `../thymer-synchub/plugins/flow/` - Flow UI (JS, to be ported)
-- `../thymer-inbox/cmd/tm/` - Go sync implementations (GitHub, Calendar, Readwise)
-- `/home/riclib/src/v4/infra/nats/` - Good NATS patterns (log adapter, KV buckets, TTL)
+The `reference/` directory contains git submodules with working reference implementations.
+Use `make submodules` to initialize them, then look at:
+- `reference/thymer-synchub/desktop/` - Go WebSocket server, MCP integration
+- `reference/thymer-synchub/plugins/` - Sync plugins (GitHub, Calendar, Readwise)
+- `reference/thymer-synchub/plannerhub/` - PlannerHub UI
 
 ## MCP Server
 
@@ -171,6 +169,31 @@ make test
 make help
 ```
 
+## Thymer Plugin Development
+
+### Modifying Plugins
+When modifying any plugin in `plugins/`:
+1. **ALWAYS bump the version** in `collection.json` (for collection plugins) or `app.json` (for app plugins)
+2. Update the version comment in `style.css` if it exists
+3. Run `make plugins` to rebuild the concatenated `plugin.js`
+
+The version number in `collection.json`/`app.json` (`"ver": N`) is what Thymer uses to detect updates. If you don't bump it, the changes won't be picked up.
+
+### Plugin Structure
+```
+plugins/
+├── app/
+│   └── synchub/           # App plugin (SyncHub)
+│       ├── collection.json # Config with "ver" field
+│       ├── style.css
+│       ├── plugin.js       # Generated - DO NOT EDIT
+│       └── src/            # Source files (concatenated by build)
+└── collections/
+    └── issues/            # Collection plugin
+        ├── collection.json
+        └── ...
+```
+
 ## Thymer Plugin SDK Reference
 
 **CANONICAL API REFERENCE**: `/home/riclib/src/thymer-bar/reference/thymer-sdk/types.d.ts`
@@ -183,10 +206,17 @@ When writing or modifying Thymer plugins (SyncHub, Issues, etc.), always consult
 - `UI` methods (`addStatusBarItem`, `addCommandPaletteCommand`, `addToaster`, etc.)
 - Line item types, segment formats, property accessors
 
-The `reference/` directory contains git submodules with SDK documentation:
+The `reference/` directory contains git submodules with SDK documentation and reference implementations:
 - `reference/thymer-sdk/` - Thymer Plugin SDK types and interfaces
+- `reference/thymer-synchub/` - Previous thymer-synchub implementation (working reference code)
 
 These are read-only reference materials. Use `make submodules` to initialize them.
+
+### Reference Code in thymer-synchub
+When porting or rewriting functionality, consult:
+- `reference/thymer-synchub/desktop/` - Go WebSocket server, MCP integration
+- `reference/thymer-synchub/plugins/` - Sync plugins (GitHub, Calendar, etc.)
+- `reference/thymer-synchub/plannerhub/` - PlannerHub UI
 
 ## Dependencies
 

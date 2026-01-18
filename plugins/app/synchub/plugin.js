@@ -1,4 +1,4 @@
-/* Sync Hub v22 - Generated from src/ - DO NOT EDIT DIRECTLY */
+/* Sync Hub v23 - Generated from src/ - DO NOT EDIT DIRECTLY */
 /* Run: make plugins */
 
 // === _00_helpers.js ===
@@ -81,7 +81,6 @@ const SyncHubHelpers = {
     return { type: 'object', properties, required };
   },
 };
-
 
 // === _01_markdown.js ===
 /**
@@ -382,7 +381,6 @@ const SyncHubMarkdown = {
   },
 };
 
-
 // === _02_core_tools.js ===
 /**
  * SyncHub Core Tools
@@ -668,7 +666,6 @@ const SyncHubCoreTools = {
   },
 };
 
-
 // === _03_registry.js ===
 /**
  * SyncHub Tool Registry
@@ -752,7 +749,6 @@ const SyncHubRegistry = {
   },
 };
 
-
 // === _04_connect.js ===
 /**
  * SyncHub WebSocket Connection
@@ -789,20 +785,24 @@ const SyncHubConnect = {
         if (onConnected) onConnected();
       };
 
-      ws.onclose = () => {
+      ws.onclose = (event) => {
         window._syncHubWS = null;
-        updateStatus('disconnected');
+        // Use 'error' if we never connected (code 1006 = abnormal closure)
+        // Use 'disconnected' if we were previously connected
+        const wasConnected = event.wasClean || event.code === 1000;
+        updateStatus(wasConnected ? 'disconnected' : 'error');
         scheduleReconnect();
       };
 
       ws.onerror = () => {
-        // Silent - status bar shows connection state
+        // Error state will be set in onclose
       };
 
       ws.onmessage = (event) => {
         if (onMessage) onMessage(event.data);
       };
     } catch (err) {
+      updateStatus('error');
       scheduleReconnect();
     }
   },
@@ -1132,7 +1132,6 @@ const SyncHubConnect = {
   },
 };
 
-
 // === _05_status.js ===
 /**
  * SyncHub Status Bar
@@ -1144,7 +1143,7 @@ const SyncHubStatus = {
    */
   create(ui, onClick) {
     return ui.addStatusBarItem({
-      htmlLabel: this.buildLabel('disconnected'),
+      htmlLabel: this.buildLabel('connecting'),
       tooltip: 'SyncHub - Connecting...',
       onClick,
     });
@@ -1162,6 +1161,7 @@ const SyncHubStatus = {
       connected: 'SyncHub - Connected to thymer-bar',
       disconnected: 'SyncHub - Disconnected (click to retry)',
       connecting: 'SyncHub - Connecting...',
+      error: 'SyncHub - Connection failed (click to retry)',
     };
 
     statusBarItem.setTooltip(tooltips[state] || 'SyncHub');
@@ -1169,13 +1169,15 @@ const SyncHubStatus = {
 
   /**
    * Build HTML label for status bar.
+   * Uses ti-cloud for all states, CSS classes handle color:
+   * - connected: green
+   * - connecting: default/gray
+   * - disconnected/error: amber
    */
   buildLabel(state) {
-    const icon = state === 'disconnected' ? 'ti-cloud-off' : 'ti-cloud';
-    return `<span class="ti ${icon} synchub-status ${state}"></span>`;
+    return `<span class="ti ti-cloud synchub-status ${state}"></span>`;
   },
 };
-
 
 // === _99_plugin.js ===
 /**
@@ -1406,5 +1408,4 @@ class Plugin extends CollectionPlugin {
     }
   }
 }
-
 

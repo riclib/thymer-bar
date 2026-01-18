@@ -79,7 +79,6 @@ const IssuesState = {
   },
 };
 
-
 // === _01_tools.js ===
 /**
  * Issues Tool Handlers
@@ -331,7 +330,6 @@ const IssuesTools = {
   },
 };
 
-
 // === _99_plugin.js ===
 /**
  * Issues Collection - Collection Plugin
@@ -353,5 +351,4 @@ class Plugin extends CollectionPlugin {
     window.syncHub.registerCollectionTools(IssuesTools.getDefinitions(ver));
   }
 }
-
 

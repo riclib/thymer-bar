@@ -15,7 +15,9 @@ import (
 	"thymer-bar/internal/secrets"
 	"thymer-bar/internal/sqlite"
 	"thymer-bar/internal/sync"
+	"thymer-bar/internal/sync/calendar"
 	"thymer-bar/internal/sync/github"
+	"thymer-bar/internal/sync/people"
 	"thymer-bar/internal/thymer"
 	"thymer-bar/internal/tray"
 	"thymer-bar/internal/tunnel"
@@ -213,15 +215,34 @@ func (a *App) initSyncEngines() {
 
 	// Register GitHub polling engine
 	githubEngine := github.New(onBit)
-	token, _ := secrets.Get(secrets.GitHubToken)
+	githubToken, _ := secrets.Get(secrets.GitHubToken)
 	githubEngine.Configure(map[string]any{
-		"token":   token,
+		"token":   githubToken,
 		"repos":   toAnySlice(cfg.GitHub.Repos),
 		"enabled": cfg.GitHub.Enabled,
 	})
 	a.syncRegistry.Register(githubEngine)
 
-	// TODO: Register other engines (readwise, calendar)
+	// Register Google Calendar engine
+	calendarEngine := calendar.New(onBit)
+	googleCreds, _ := secrets.Get(secrets.GoogleCredentials)
+	googleToken, _ := secrets.Get(secrets.GoogleOAuthToken)
+	calendarEngine.Configure(map[string]any{
+		"credentials": googleCreds,
+		"token":       googleToken,
+		"calendars":   toAnySlice(cfg.Calendar.Calendars),
+		"enabled":     cfg.Calendar.Enabled,
+	})
+	a.syncRegistry.Register(calendarEngine)
+
+	// Register Google People engine
+	peopleEngine := people.New(onBit)
+	peopleEngine.Configure(map[string]any{
+		"credentials": googleCreds,
+		"token":       googleToken,
+		"enabled":     cfg.People.Enabled,
+	})
+	a.syncRegistry.Register(peopleEngine)
 
 	fmt.Printf("Registered %d sync engines\n", len(a.syncRegistry.All()))
 }
@@ -496,9 +517,47 @@ func (a *App) initDevMode() {
 // Configuration API (exposed to frontend)
 // =============================================================================
 
-// SetGitHubToken stores the GitHub token securely in the system keychain.
+// SetGitHubToken validates and stores the GitHub token securely in the system keychain.
 func (a *App) SetGitHubToken(token string) error {
-	return secrets.Set(secrets.GitHubToken, token)
+	if token == "" {
+		return fmt.Errorf("token cannot be empty")
+	}
+
+	// Validate token by making a test API call
+	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to validate token: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("invalid token (status %d)", resp.StatusCode)
+	}
+
+	// Token is valid - store it
+	if err := secrets.Set(secrets.GitHubToken, token); err != nil {
+		return fmt.Errorf("failed to store token: %w", err)
+	}
+
+	// Enable the source in sync state
+	if syncState != nil {
+		syncState.mu.Lock()
+		if state := syncState.Sources["github"]; state != nil {
+			state.Enabled = true
+		}
+		syncState.mu.Unlock()
+		syncState.save()
+	}
+
+	return nil
 }
 
 // GetGitHubToken retrieves the GitHub token from the system keychain.
