@@ -1,0 +1,215 @@
+/* AgentHub v2 */
+/* AgentHub Dashboard Styles */
+
+.agent-dashboard {
+    padding: 24px;
+    font-family: var(--font-family);
+}
+
+.agent-dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.agent-card {
+    background: var(--bg-hover);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px;
+    padding: 20px;
+    transition: all 0.2s ease;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+
+.agent-card:hover {
+    background: var(--bg-active, var(--bg-hover));
+    border-color: rgba(255,255,255,0.2);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    transform: translateY(-2px);
+}
+
+.agent-card[data-status="error"] {
+    border-color: var(--enum-red-bg);
+}
+
+.agent-card[data-status="thinking"] {
+    border-color: var(--enum-blue-bg);
+}
+
+.agent-card[data-enabled="no"] {
+    opacity: 0.6;
+    border-style: dashed;
+}
+
+.agent-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.agent-card-icon {
+    font-size: 20px;
+    color: var(--text-muted);
+}
+
+.agent-card-name {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-default);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.agent-card-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--enum-green-bg);
+}
+
+.agent-card-dot.error {
+    background: var(--enum-red-bg);
+}
+
+.agent-card-dot.disabled {
+    background: var(--text-muted);
+}
+
+.agent-card-dot.thinking {
+    background: none;
+    width: auto;
+    height: auto;
+}
+
+.agent-card-dot.thinking .ti-blinking-dot {
+    color: var(--enum-blue-fg);
+    font-size: 20px;
+}
+
+.agent-card-body {
+    text-align: center;
+    padding: 8px 0;
+}
+
+.agent-card-value {
+    font-size: 36px;
+    font-weight: 700;
+    color: var(--text-default);
+    line-height: 1;
+    margin-bottom: 4px;
+}
+
+.agent-card-breakdown {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 8px;
+}
+
+.agent-card-breakdown .up {
+    color: var(--enum-orange-fg, #f59e0b);
+}
+
+.agent-card-breakdown .down {
+    color: var(--enum-blue-fg, #3b82f6);
+}
+
+.agent-card-breakdown .tps {
+    color: var(--enum-green-fg, #22c55e);
+}
+
+.agent-card-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.agent-card-footer {
+    text-align: center;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-default);
+}
+
+.agent-card-time {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.agent-card-invocations {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+}
+
+.agent-card-error {
+    font-size: 11px;
+    color: var(--enum-red-fg);
+    margin-top: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.agent-dashboard-summary {
+    background: var(--bg-default);
+    border: 1px solid var(--border-default);
+    border-radius: 12px;
+    padding: 16px 24px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 24px;
+    color: var(--text-muted);
+    font-size: 14px;
+}
+
+.agent-summary-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.agent-summary-value {
+    font-weight: 600;
+    color: var(--text-default);
+}
+
+.agent-summary-item .up {
+    color: var(--enum-orange-fg, #f59e0b);
+}
+
+.agent-summary-item .down {
+    color: var(--enum-blue-fg, #3b82f6);
+}
+
+.agent-summary-item .tps {
+    color: var(--enum-green-fg, #22c55e);
+    font-weight: 600;
+}
+
+.agent-dashboard-empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-muted);
+}
+
+.agent-dashboard-empty-icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+    opacity: 0.5;
+}
+
+.agent-dashboard-empty-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-default);
+    margin-bottom: 8px;
+}

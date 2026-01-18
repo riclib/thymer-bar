@@ -1,4 +1,4 @@
-/* People v1 - Generated from src/ - DO NOT EDIT DIRECTLY */
+/* People v2 - Generated from src/ - DO NOT EDIT DIRECTLY */
 /* Run: make plugins */
 
 // === _00_helpers.js ===
