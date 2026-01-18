@@ -97,6 +97,13 @@ html, body {
     overflow: hidden;
 }
 
+/* When dashboard is shown, use volcanic theme for body */
+body:has(.dashboard) {
+    background: #050505;
+    color: #d4cdc2;
+    font-family: 'IBM Plex Mono', 'SF Mono', 'Monaco', 'Consolas', monospace;
+}
+
 /* Plugin Manager Layout - 3 Column */
 .plugin-manager {
     height: 100vh;
@@ -658,7 +665,7 @@ html, body {
 
     height: 100%;
     background: var(--void);
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: 'IBM Plex Mono', 'SF Mono', 'Monaco', 'Consolas', monospace;
     color: var(--text);
 }
 
@@ -693,7 +700,7 @@ html, body {
     display: flex;
     align-items: center;
     gap: 8px;
-    font-family: 'Fraunces', serif;
+    font-family: 'Fraunces', 'Georgia', 'Times New Roman', serif;
     font-size: 10px;
     font-weight: 400;
     letter-spacing: 0.2em;
@@ -850,7 +857,7 @@ html, body {
     display: flex;
     align-items: center;
     gap: 10px;
-    font-family: 'Fraunces', serif;
+    font-family: 'Fraunces', 'Georgia', 'Times New Roman', serif;
     font-size: 10px;
     font-weight: 400;
     letter-spacing: 0.2em;
@@ -868,7 +875,7 @@ html, body {
 
 .sm-info-header span {
     color: var(--text);
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: 'IBM Plex Mono', 'SF Mono', 'Monaco', 'Consolas', monospace;
     font-size: 14px;
     font-weight: 500;
     letter-spacing: 0;
@@ -1006,7 +1013,7 @@ html, body {
 }
 
 .sm-section-header {
-    font-family: 'Fraunces', serif;
+    font-family: 'Fraunces', 'Georgia', 'Times New Roman', serif;
     font-size: 9px;
     font-weight: 400;
     letter-spacing: 0.15em;
@@ -1359,7 +1366,7 @@ html, body {
     padding: 0 20px;
     border-radius: 6px;
     border: none;
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: 'IBM Plex Mono', 'SF Mono', 'Monaco', 'Consolas', monospace;
     font-size: 12px;
     font-weight: 500;
     display: flex;
@@ -1419,7 +1426,7 @@ html, body {
     min-height: 44px;
     padding: 0 16px;
     border-radius: 6px;
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: 'IBM Plex Mono', 'SF Mono', 'Monaco', 'Consolas', monospace;
     font-weight: 500;
     display: flex;
     align-items: center;
@@ -1456,7 +1463,7 @@ html, body {
     color: var(--text-dim);
     cursor: pointer;
     transition: all 0.15s ease;
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: 'IBM Plex Mono', 'SF Mono', 'Monaco', 'Consolas', monospace;
 }
 
 .sm-btn-small:hover {
@@ -1623,7 +1630,7 @@ html, body {
     border-radius: 6px;
     color: var(--text);
     font-size: 12px;
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: 'IBM Plex Mono', 'SF Mono', 'Monaco', 'Consolas', monospace;
 }
 
 .sm-filter-input:focus {
@@ -1730,7 +1737,7 @@ html, body {
     border-radius: 6px;
     color: var(--text);
     font-size: 13px;
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: 'IBM Plex Mono', 'SF Mono', 'Monaco', 'Consolas', monospace;
 }
 
 .sm-token-input:focus {
@@ -1764,7 +1771,7 @@ html, body {
     border-radius: 6px;
     color: var(--text);
     font-size: 12px;
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: 'IBM Plex Mono', 'SF Mono', 'Monaco', 'Consolas', monospace;
     resize: vertical;
 }
 
@@ -1810,7 +1817,7 @@ html, body {
     height: 100vh;
     background: var(--border);
     gap: 1px;
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: 'IBM Plex Mono', 'SF Mono', 'Monaco', 'Consolas', monospace;
     color: var(--text);
 }
 
@@ -1842,7 +1849,7 @@ html, body {
 }
 
 .db-panel-label {
-    font-family: 'Fraunces', serif;
+    font-family: 'Fraunces', 'Georgia', 'Times New Roman', serif;
     font-size: 10px;
     font-weight: 400;
     letter-spacing: 0.2em;
@@ -2053,19 +2060,38 @@ html, body {
     padding: 40px;
 }
 
-.db-focus-empty {
-    text-align: center;
+/* Focus Idle State - shows empty ring */
+.db-focus-idle {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+}
+
+.db-focus-time.idle {
+    font-size: 56px;
+    color: var(--text-muted);
+    opacity: 0.4;
+}
+
+.db-focus-task.idle {
+    font-family: 'Fraunces', 'Georgia', 'Times New Roman', serif;
+    font-size: 22px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+}
+
+.db-focus-hint {
+    font-size: 12px;
     color: var(--text-muted);
 }
 
-.db-focus-empty-icon {
-    font-size: 48px;
-    margin-bottom: 16px;
-    opacity: 0.3;
-}
-
-.db-focus-empty-text {
-    font-size: 14px;
+.db-ring-progress.idle {
+    stroke: var(--text-muted);
+    opacity: 0.15;
+    stroke-dashoffset: 942;
 }
 
 .db-focus-status {
@@ -2147,7 +2173,7 @@ html, body {
 }
 
 .db-focus-task {
-    font-family: 'Fraunces', serif;
+    font-family: 'Fraunces', 'Georgia', 'Times New Roman', serif;
     font-size: 26px;
     font-weight: 400;
     color: var(--text-bright);
@@ -2183,7 +2209,7 @@ html, body {
     padding: 0 32px;
     border-radius: 10px;
     border: none;
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: 'IBM Plex Mono', 'SF Mono', 'Monaco', 'Consolas', monospace;
     font-size: 14px;
     font-weight: 500;
     display: flex;
@@ -2245,6 +2271,15 @@ html, body {
 .db-q-item.next {
     border-color: var(--ember-soft);
     background: linear-gradient(135deg, var(--elevated) 0%, var(--ember-soft) 100%);
+}
+
+.db-q-item.done {
+    opacity: 0.5;
+}
+
+.db-q-item.done .db-q-title {
+    text-decoration: line-through;
+    color: var(--text-muted);
 }
 
 .db-q-head {
@@ -2549,7 +2584,7 @@ html, body {
     transition: width 0.3s ease;
 }
 
-.db-habit-item.habit .db-habit-progress {
+.db-habit-item.virtue .db-habit-progress {
     background: var(--sage);
 }
 
