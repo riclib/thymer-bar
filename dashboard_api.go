@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"thymer-bar/internal/config"
+	"thymer-bar/internal/thymer"
 	"thymer-bar/internal/ui"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -57,14 +58,16 @@ type DashboardStats struct {
 
 // DashboardTask represents a task for the dashboard.
 type DashboardTask struct {
-	GUID          string `json:"guid"`
-	Title         string `json:"title"`
-	Source        string `json:"source"`
-	Status        string `json:"status"` // pending, in_progress, done
-	Estimate      string `json:"estimate,omitempty"`
-	ScheduledTime string `json:"scheduledTime,omitempty"`
-	ElapsedToday  int    `json:"elapsedToday,omitempty"`  // seconds worked today
-	SessionCount  int    `json:"sessionCount,omitempty"`  // number of sessions today
+	GUID          string             `json:"guid"`
+	Title         string             `json:"title"`
+	Source        string             `json:"source"`
+	Status        string             `json:"status"` // pending, in_progress, done
+	Estimate      string             `json:"estimate,omitempty"`
+	ScheduledTime string             `json:"scheduledTime,omitempty"`
+	ElapsedToday  int                `json:"elapsedToday,omitempty"`  // seconds worked today
+	SessionCount  int                `json:"sessionCount,omitempty"`  // number of sessions today
+	PlannedSlots  []PlannedSlotData  `json:"plannedSlots,omitempty"`  // scheduled time slots
+	Color         int                `json:"color"`                    // 0-9 for pastel rotation
 }
 
 // DashboardEvent represents a calendar event.
@@ -259,6 +262,15 @@ func (a *App) GetDashboardHTML() (string, error) {
 
 	// Convert tasks
 	for _, t := range data.Tasks {
+		// Convert planned slots
+		var uiSlots []ui.PlannedSlot
+		for _, slot := range t.PlannedSlots {
+			uiSlots = append(uiSlots, ui.PlannedSlot{
+				StartTime: slot.StartTime,
+				Duration:  slot.Duration,
+			})
+		}
+
 		uiData.Tasks = append(uiData.Tasks, ui.Task{
 			GUID:         t.GUID,
 			Title:        t.Title,
@@ -268,6 +280,8 @@ func (a *App) GetDashboardHTML() (string, error) {
 			Time:         t.ScheduledTime,
 			ElapsedToday: t.ElapsedToday,
 			SessionCount: t.SessionCount,
+			PlannedSlots: uiSlots,
+			Color:        t.Color,
 		})
 	}
 
@@ -538,6 +552,111 @@ func (a *App) GetSessionHistory(date string) ([]SessionData, error) {
 }
 
 // =============================================================================
+// Planning API (exposed to frontend for drag-and-drop)
+// =============================================================================
+
+// ScheduleTask schedules a task to a specific time slot on the timeline.
+func (a *App) ScheduleTask(guid, startTime string, durationMinutes int) error {
+	slog.Info("[API] ScheduleTask called",
+		"guid", guid,
+		"startTime", startTime,
+		"durationMinutes", durationMinutes,
+		"intent", "schedule task to timeline")
+
+	if a.projection == nil {
+		slog.Error("[API] ScheduleTask failed - projection not initialized")
+		return fmt.Errorf("projection not initialized")
+	}
+
+	ctx := context.Background()
+	err := a.projection.ScheduleTask(ctx, guid, startTime, durationMinutes)
+	if err != nil {
+		slog.Error("[API] ScheduleTask failed", "error", err)
+	} else {
+		slog.Info("[API] ScheduleTask succeeded", "guid", guid, "startTime", startTime)
+	}
+	return err
+}
+
+// UnscheduleTask removes a task from the timeline (specific slot or all slots).
+func (a *App) UnscheduleTask(guid, startTime string) error {
+	slog.Info("[API] UnscheduleTask called",
+		"guid", guid,
+		"startTime", startTime,
+		"intent", "remove task from timeline")
+
+	if a.projection == nil {
+		slog.Error("[API] UnscheduleTask failed - projection not initialized")
+		return fmt.Errorf("projection not initialized")
+	}
+
+	ctx := context.Background()
+	err := a.projection.UnscheduleTask(ctx, guid, startTime)
+	if err != nil {
+		slog.Error("[API] UnscheduleTask failed", "error", err)
+	} else {
+		slog.Info("[API] UnscheduleTask succeeded", "guid", guid)
+	}
+	return err
+}
+
+// ReorderTask moves a task to a new position in the queue.
+func (a *App) ReorderTask(guid, afterGuid string) error {
+	slog.Info("[API] ReorderTask called",
+		"guid", guid,
+		"afterGuid", afterGuid,
+		"intent", "reorder task in queue")
+
+	if a.projection == nil {
+		return fmt.Errorf("projection not initialized")
+	}
+
+	ctx := context.Background()
+	return a.projection.ReorderTask(ctx, guid, afterGuid)
+}
+
+// ResizeTask changes the duration of a planned time slot.
+func (a *App) ResizeTask(guid, startTime string, newDuration int) error {
+	slog.Info("[API] ResizeTask called",
+		"guid", guid,
+		"startTime", startTime,
+		"newDuration", newDuration,
+		"intent", "resize planned slot")
+
+	if a.projection == nil {
+		return fmt.Errorf("projection not initialized")
+	}
+
+	ctx := context.Background()
+	return a.projection.ResizeTask(ctx, guid, startTime, newDuration)
+}
+
+// GetPlannedSlots returns all planned slots for all tasks.
+func (a *App) GetPlannedSlots() (map[string][]PlannedSlotData, error) {
+	if a.projection == nil {
+		return nil, fmt.Errorf("projection not initialized")
+	}
+
+	slots := a.projection.GetAllPlannedSlots()
+	result := make(map[string][]PlannedSlotData)
+	for guid, taskSlots := range slots {
+		for _, slot := range taskSlots {
+			result[guid] = append(result[guid], PlannedSlotData{
+				StartTime: slot.StartTime,
+				Duration:  slot.Duration,
+			})
+		}
+	}
+	return result, nil
+}
+
+// PlannedSlotData is the frontend representation of a planned slot.
+type PlannedSlotData struct {
+	StartTime string `json:"startTime"` // "14:00"
+	Duration  int    `json:"duration"`  // minutes
+}
+
+// =============================================================================
 // Internal helpers
 // =============================================================================
 
@@ -561,6 +680,15 @@ func (a *App) getTodayTasks() ([]DashboardTask, error) {
 				status = "in_progress"
 			}
 
+			// Convert planned slots
+			var plannedSlots []PlannedSlotData
+			for _, slot := range task.PlannedSlots {
+				plannedSlots = append(plannedSlots, PlannedSlotData{
+					StartTime: slot.StartTime,
+					Duration:  slot.Duration,
+				})
+			}
+
 			tasks = append(tasks, DashboardTask{
 				GUID:         task.GUID,
 				Title:        task.Markdown,
@@ -568,6 +696,8 @@ func (a *App) getTodayTasks() ([]DashboardTask, error) {
 				Status:       status,
 				ElapsedToday: elapsedByTask[task.GUID],
 				SessionCount: sessionCounts[task.GUID],
+				PlannedSlots: plannedSlots,
+				Color:        task.Color,
 			})
 		}
 
@@ -578,20 +708,49 @@ func (a *App) getTodayTasks() ([]DashboardTask, error) {
 	}
 
 	// Fallback: Get tasks from Thymer's daily note directly (READ path via WebSocket)
+	// This triggers the normal sync flow: Thymer -> JetStream -> projection
 	if a.thymer != nil && a.thymer.Available() {
 		journal, err := a.thymer.GetTodayJournal(ctx)
 		if err != nil {
 			slog.Debug("failed to get today's journal", "error", err)
 		} else if journal != nil {
-			currentSession := a.projection.GetCurrentSession()
+			// Convert journal to snapshot and trigger normal sync flow
+			snapshot := &thymer.DailyNoteSnapshot{
+				Date:       time.Now().Format("2006-01-02"),
+				ObservedAt: time.Now().Format(time.RFC3339),
+			}
+			for _, item := range journal.LineItems {
+				if item.Type != "task" {
+					continue
+				}
+				status := "pending"
+				if item.Checked {
+					status = "done"
+				}
+				snapshot.Lines = append(snapshot.Lines, thymer.DailyNoteLineObs{
+					GUID:      item.GUID,
+					Markdown:  item.Text,
+					Status:    status,
+					UpdatedAt: time.Now().Format(time.RFC3339),
+				})
+			}
 
-			// Extract tasks from line items
+			// Trigger the normal snapshot handler (publishes to JetStream, updates projection)
+			if a.thymer.OnDailyNoteSnapshot != nil && len(snapshot.Lines) > 0 {
+				a.thymer.OnDailyNoteSnapshot(snapshot)
+				slog.Info("triggered sync from fallback fetch", "tasks", len(snapshot.Lines))
+
+				// Now get tasks from projection (should be populated)
+				return a.getTodayTasks()
+			}
+
+			// If no handler, build tasks directly from journal
+			currentSession := a.projection.GetCurrentSession()
 			for _, item := range journal.LineItems {
 				if item.Type != "task" {
 					continue
 				}
 
-				// Text is already markdown with [title](thymer:uuid) links
 				title := item.Text
 				if title == "" {
 					continue

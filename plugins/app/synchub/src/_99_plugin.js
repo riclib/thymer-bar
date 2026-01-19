@@ -112,6 +112,10 @@ class Plugin extends CollectionPlugin {
           capabilities: ['tools', 'navigate'],
         });
         this.sendToolsManifest();
+        // Send daily note snapshot on connect
+        if (typeof DailyNoteWatcher !== 'undefined' && DailyNoteWatcher.sendSnapshot) {
+          setTimeout(() => DailyNoteWatcher.sendSnapshot(false), 500);
+        }
       },
       onMessage: (data) => this.handleMessage(data),
       scheduleReconnect: () => this.scheduleReconnect(),

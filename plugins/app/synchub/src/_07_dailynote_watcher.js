@@ -230,7 +230,9 @@ const DailyNoteWatcher = {
    * Get journal with caching (avoids collection search every poll).
    */
   async getJournalCached() {
-    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    // Use local date, not UTC (toISOString returns UTC)
+    const now = new Date();
+    const today = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
 
     // Invalidate cache on day change
     if (this.journalDate !== today) {
@@ -247,12 +249,69 @@ const DailyNoteWatcher = {
   },
 
   /**
+   * Get today's journal - strict mode (no fallback to yesterday).
+   * Returns { journal, reason } where reason explains why journal is null.
+   */
+  async getTodayJournalStrict() {
+    if (!this.dataApi) {
+      console.log('[DailyNoteWatcher] getTodayJournalStrict: no dataApi');
+      return { journal: null, reason: 'no-data-api' };
+    }
+
+    const collections = await this.dataApi.getAllCollections();
+    const journalCollection = collections.find((c) => c.getName() === 'Journal');
+    if (!journalCollection) {
+      console.log('[DailyNoteWatcher] getTodayJournalStrict: no Journal collection');
+      return { journal: null, reason: 'no-journal-collection' };
+    }
+
+    // Use local date, not UTC (toISOString returns UTC)
+    const now = new Date();
+    const today = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    const records = await journalCollection.getAllRecords();
+    console.log('[DailyNoteWatcher] getTodayJournalStrict: looking for', today, 'in', records.length, 'records');
+
+    // Debug: show last 5 GUIDs
+    if (records.length > 0) {
+      const guids = records.slice(-5).map(r => r.guid);
+      console.log('[DailyNoteWatcher] last 5 journal GUIDs:', guids);
+    }
+
+    const journal = records.find((r) => r.guid.endsWith(today));
+
+    if (!journal) {
+      console.log('[DailyNoteWatcher] getTodayJournalStrict: NOT FOUND for', today);
+      return { journal: null, reason: 'no-daily-note-for-today', date: today };
+    }
+
+    console.log('[DailyNoteWatcher] getTodayJournalStrict: FOUND', journal.guid);
+    return { journal, reason: null };
+  },
+
+  /**
    * Build and send a full snapshot.
+   * Uses strict date matching - won't send yesterday's data as today's.
    */
   async sendSnapshot(manual = false) {
-    const journal = await window.syncHub?.getTodayJournal();
-    if (!journal) return;
+    const result = await this.getTodayJournalStrict();
+    if (!result.journal) {
+      if (manual) {
+        console.log('[DailyNoteWatcher] No daily note for today - please create it in Thymer');
+      }
+      // Send empty snapshot so thymer-bar knows we're connected but no data yet
+      if (window.syncHub?.isConnected?.()) {
+        window.syncHub.send({
+          type: 'dailynote.snapshot',
+          date: new Date().toISOString().slice(0, 10),
+          observedAt: new Date().toISOString(),
+          lines: [],
+          reason: result.reason,
+        });
+      }
+      return;
+    }
 
+    const journal = result.journal;
     const lineItems = await journal.getLineItems();
     if (!lineItems || lineItems.length === 0) return;
 

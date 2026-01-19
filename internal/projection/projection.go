@@ -35,6 +35,7 @@ type State struct {
 
 	// Internal
 	currentDate string
+	colorCounter int // for assigning rotating colors to tasks
 	db          *sqlite.DB
 	publisher   *events.Publisher
 }
@@ -48,9 +49,19 @@ type Task struct {
 	UpdatedAt time.Time `json:"updated_at"` // Thymer's timestamp
 
 	// From planning events (thymer-bar UI)
-	ScheduledTime *string    `json:"scheduled_time,omitempty"` // "14:00"
+	ScheduledTime *string    `json:"scheduled_time,omitempty"` // "14:00" (legacy, single slot)
 	Duration      *string    `json:"duration,omitempty"`       // "30m", "1h"
 	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+
+	// Multi-slot planning (drag-and-drop)
+	PlannedSlots []PlannedSlot `json:"planned_slots,omitempty"` // Multiple time slots
+	Color        int           `json:"color"`                   // 0-9 for pastel rotation
+}
+
+// PlannedSlot represents a single scheduled time slot for a task
+type PlannedSlot struct {
+	StartTime string `json:"start_time"` // "14:00" (24h format)
+	Duration  int    `json:"duration"`   // minutes
 }
 
 // Session represents a work session.
@@ -99,7 +110,9 @@ func (s *State) Initialize(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	today := time.Now().Format("2006-01-02")
+	now := time.Now()
+	zone, offset := now.Zone()
+	today := now.Format("2006-01-02")
 	s.currentDate = today
 	s.TodayStats = &DailyStats{Date: today}
 
@@ -108,19 +121,29 @@ func (s *State) Initialize(ctx context.Context) error {
 	// This ensures JetStream events are the single source of truth.
 
 	slog.Info("projection initialized (awaiting event replay)",
-		"date", today)
+		"date", today,
+		"now", now.Format(time.RFC3339),
+		"timezone", zone,
+		"offsetSeconds", offset)
 
 	return nil
 }
 
 // CheckDayChange resets state if the date has changed.
 func (s *State) CheckDayChange() {
-	today := time.Now().Format("2006-01-02")
+	now := time.Now()
+	today := now.Format("2006-01-02")
 	if today != s.currentDate {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 
-		slog.Info("day changed, resetting state", "old", s.currentDate, "new", today)
+		zone, offset := now.Zone()
+		slog.Info("day changed, resetting state",
+			"old", s.currentDate,
+			"new", today,
+			"now", now.Format(time.RFC3339),
+			"timezone", zone,
+			"offsetSeconds", offset)
 
 		if s.CurrentSession != nil {
 			s.CurrentSession.Status = "abandoned"
@@ -463,6 +486,258 @@ func (s *State) GetTask(guid string) *Task {
 }
 
 // =============================================================================
+// Planning - schedule tasks to timeline
+// =============================================================================
+
+// ScheduleTask schedules a task to a specific time slot.
+// Returns error if there's a conflict with existing events/tasks.
+func (s *State) ScheduleTask(ctx context.Context, guid, startTime string, durationMinutes int) error {
+	slog.Info("[projection] ScheduleTask called",
+		"guid", guid,
+		"startTime", startTime,
+		"durationMinutes", durationMinutes,
+		"currentDate", s.currentDate)
+
+	s.CheckDayChange()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	task, exists := s.Tasks[guid]
+	if !exists {
+		slog.Error("[projection] ScheduleTask failed - task not found",
+			"guid", guid,
+			"totalTasks", len(s.Tasks))
+		return fmt.Errorf("task not found: %s", guid)
+	}
+
+	slog.Info("[projection] Task found",
+		"guid", guid,
+		"markdown", task.Markdown[:min(30, len(task.Markdown))],
+		"existingSlots", len(task.PlannedSlots),
+		"color", task.Color)
+
+	// Assign color if not set
+	if task.Color == 0 && len(task.PlannedSlots) == 0 {
+		s.colorCounter++
+		task.Color = s.colorCounter % 10
+		slog.Info("[projection] Assigned color", "color", task.Color)
+	}
+
+	// Check for conflicts (simplified - could be enhanced)
+	startMinutes := parseTimeToMinutes(startTime)
+	endMinutes := startMinutes + durationMinutes
+
+	slog.Info("[projection] Checking conflicts",
+		"startMinutes", startMinutes,
+		"endMinutes", endMinutes,
+		"asTime", fmt.Sprintf("%02d:%02d - %02d:%02d", startMinutes/60, startMinutes%60, endMinutes/60, endMinutes%60))
+
+	for taskGuid, t := range s.Tasks {
+		for _, slot := range t.PlannedSlots {
+			slotStart := parseTimeToMinutes(slot.StartTime)
+			slotEnd := slotStart + slot.Duration
+			// Check overlap
+			if startMinutes < slotEnd && endMinutes > slotStart {
+				slog.Warn("[projection] Conflict detected",
+					"conflictingTask", taskGuid,
+					"conflictSlot", slot.StartTime,
+					"conflictDuration", slot.Duration)
+				return fmt.Errorf("conflict with existing planned task")
+			}
+		}
+	}
+
+	slog.Info("[projection] No conflicts, publishing event",
+		"eventType", events.EventTaskScheduled,
+		"hasPublisher", s.publisher != nil)
+
+	// Publish event
+	if s.publisher != nil {
+		err := s.publisher.PublishToDay(ctx, events.EventTaskScheduled, map[string]any{
+			"guid":     guid,
+			"time":     startTime,
+			"duration": float64(durationMinutes),
+		})
+		if err != nil {
+			slog.Error("[projection] Failed to publish event", "error", err)
+		} else {
+			slog.Info("[projection] Event published successfully")
+		}
+	}
+
+	// Apply locally
+	task.PlannedSlots = append(task.PlannedSlots, PlannedSlot{
+		StartTime: startTime,
+		Duration:  durationMinutes,
+	})
+	task.ScheduledTime = &startTime
+
+	slog.Info("[projection] Task scheduled successfully",
+		"guid", guid,
+		"time", startTime,
+		"duration", durationMinutes,
+		"totalSlots", len(task.PlannedSlots))
+	return nil
+}
+
+// UnscheduleTask removes a task from a specific time slot (or all slots).
+func (s *State) UnscheduleTask(ctx context.Context, guid, startTime string) error {
+	s.CheckDayChange()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	task, exists := s.Tasks[guid]
+	if !exists {
+		return fmt.Errorf("task not found: %s", guid)
+	}
+
+	// Publish event
+	if s.publisher != nil {
+		s.publisher.PublishToDay(ctx, events.EventTaskUnscheduled, map[string]any{
+			"guid": guid,
+			"time": startTime,
+		})
+	}
+
+	// Apply locally
+	if startTime != "" {
+		newSlots := make([]PlannedSlot, 0, len(task.PlannedSlots))
+		for _, slot := range task.PlannedSlots {
+			if slot.StartTime != startTime {
+				newSlots = append(newSlots, slot)
+			}
+		}
+		task.PlannedSlots = newSlots
+	} else {
+		task.PlannedSlots = nil
+	}
+
+	if len(task.PlannedSlots) == 0 {
+		task.ScheduledTime = nil
+	}
+
+	slog.Info("task unscheduled", "guid", guid, "time", startTime)
+	return nil
+}
+
+// ResizeTask changes the duration of a planned slot.
+func (s *State) ResizeTask(ctx context.Context, guid, startTime string, newDuration int) error {
+	s.CheckDayChange()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	task, exists := s.Tasks[guid]
+	if !exists {
+		return fmt.Errorf("task not found: %s", guid)
+	}
+
+	// Enforce minimum 15 minutes
+	if newDuration < 15 {
+		newDuration = 15
+	}
+
+	// Publish event
+	if s.publisher != nil {
+		s.publisher.PublishToDay(ctx, events.EventTaskDuration, map[string]any{
+			"guid":     guid,
+			"time":     startTime,
+			"duration": float64(newDuration),
+		})
+	}
+
+	// Apply locally
+	for i := range task.PlannedSlots {
+		if task.PlannedSlots[i].StartTime == startTime {
+			task.PlannedSlots[i].Duration = newDuration
+			break
+		}
+	}
+
+	slog.Info("task resized", "guid", guid, "time", startTime, "duration", newDuration)
+	return nil
+}
+
+// ReorderTask moves a task to a new position in the queue.
+func (s *State) ReorderTask(ctx context.Context, guid, afterGuid string) error {
+	s.CheckDayChange()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Verify task exists
+	if _, exists := s.Tasks[guid]; !exists {
+		return fmt.Errorf("task not found: %s", guid)
+	}
+
+	// Publish event
+	if s.publisher != nil {
+		s.publisher.PublishToDay(ctx, events.EventTaskReordered, map[string]any{
+			"guid":       guid,
+			"after_guid": afterGuid,
+		})
+	}
+
+	// Apply locally - remove from current position
+	for i, g := range s.TaskOrder {
+		if g == guid {
+			s.TaskOrder = append(s.TaskOrder[:i], s.TaskOrder[i+1:]...)
+			break
+		}
+	}
+
+	// Insert at new position
+	if afterGuid == "" {
+		s.TaskOrder = append([]string{guid}, s.TaskOrder...)
+	} else {
+		for i, g := range s.TaskOrder {
+			if g == afterGuid {
+				s.TaskOrder = append(s.TaskOrder[:i+1], append([]string{guid}, s.TaskOrder[i+1:]...)...)
+				break
+			}
+		}
+	}
+
+	slog.Info("task reordered", "guid", guid, "after", afterGuid)
+	return nil
+}
+
+// GetPlannedSlots returns all planned slots for a given task.
+func (s *State) GetPlannedSlots(guid string) []PlannedSlot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if task, exists := s.Tasks[guid]; exists {
+		slots := make([]PlannedSlot, len(task.PlannedSlots))
+		copy(slots, task.PlannedSlots)
+		return slots
+	}
+	return nil
+}
+
+// GetAllPlannedSlots returns all planned slots across all tasks.
+func (s *State) GetAllPlannedSlots() map[string][]PlannedSlot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make(map[string][]PlannedSlot)
+	for guid, task := range s.Tasks {
+		if len(task.PlannedSlots) > 0 {
+			slots := make([]PlannedSlot, len(task.PlannedSlots))
+			copy(slots, task.PlannedSlots)
+			result[guid] = slots
+		}
+	}
+	return result
+}
+
+// parseTimeToMinutes converts "HH:MM" to minutes since midnight
+func parseTimeToMinutes(timeStr string) int {
+	// Parse "14:00" or "14:30" format
+	var hour, minute int
+	fmt.Sscanf(timeStr, "%d:%d", &hour, &minute)
+	return hour*60 + minute
+}
+
+// =============================================================================
 // Apply - rebuild state from events
 // =============================================================================
 
@@ -580,21 +855,59 @@ func (s *State) Apply(event *events.Event) {
 	case events.EventTaskScheduled:
 		guid, _ := event.Data["guid"].(string)
 		timeStr, _ := event.Data["time"].(string)
+		durationMin, _ := event.Data["duration"].(float64)
+		if durationMin == 0 {
+			durationMin = 30 // default 30 minutes
+		}
 		if task, exists := s.Tasks[guid]; exists {
+			// Add to PlannedSlots
+			task.PlannedSlots = append(task.PlannedSlots, PlannedSlot{
+				StartTime: timeStr,
+				Duration:  int(durationMin),
+			})
+			// Legacy support
 			task.ScheduledTime = &timeStr
 		}
 
 	case events.EventTaskUnscheduled:
 		guid, _ := event.Data["guid"].(string)
+		timeStr, _ := event.Data["time"].(string)
 		if task, exists := s.Tasks[guid]; exists {
-			task.ScheduledTime = nil
+			if timeStr != "" {
+				// Remove specific slot
+				newSlots := make([]PlannedSlot, 0, len(task.PlannedSlots))
+				for _, slot := range task.PlannedSlots {
+					if slot.StartTime != timeStr {
+						newSlots = append(newSlots, slot)
+					}
+				}
+				task.PlannedSlots = newSlots
+			} else {
+				// Remove all slots (legacy behavior)
+				task.PlannedSlots = nil
+			}
+			if len(task.PlannedSlots) == 0 {
+				task.ScheduledTime = nil
+			}
 		}
 
 	case events.EventTaskDuration:
 		guid, _ := event.Data["guid"].(string)
-		duration, _ := event.Data["duration"].(string)
+		timeStr, _ := event.Data["time"].(string)
+		durationMin, _ := event.Data["duration"].(float64)
+		durationStr, _ := event.Data["duration_str"].(string)
 		if task, exists := s.Tasks[guid]; exists {
-			task.Duration = &duration
+			// Update specific slot
+			for i := range task.PlannedSlots {
+				if task.PlannedSlots[i].StartTime == timeStr {
+					task.PlannedSlots[i].Duration = int(durationMin)
+					break
+				}
+			}
+			// Legacy support
+			if durationStr != "" {
+				task.Duration = &durationStr
+			}
 		}
 
 	case events.EventTaskCompleted:

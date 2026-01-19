@@ -33,6 +33,8 @@ export function GetGitHubToken():Promise<string>;
 
 export function GetGoogleCalendarConfigHTML():Promise<string>;
 
+export function GetPlannedSlots():Promise<Record<string, Array<main.PlannedSlotData>>>;
+
 export function GetPluginInfoHTML(arg1:string):Promise<string>;
 
 export function GetPluginManagerHTML():Promise<string>;
@@ -69,15 +71,21 @@ export function PauseSession():Promise<void>;
 
 export function RefreshPluginList():Promise<string>;
 
+export function ReorderTask(arg1:string,arg2:string):Promise<void>;
+
 export function RerenderAll():Promise<void>;
 
 export function RerenderSource(arg1:string):Promise<void>;
+
+export function ResizeTask(arg1:string,arg2:string,arg3:number):Promise<void>;
 
 export function ResumeSession():Promise<void>;
 
 export function ResyncAll():Promise<void>;
 
 export function ResyncSource(arg1:string):Promise<void>;
+
+export function ScheduleTask(arg1:string,arg2:string,arg3:number):Promise<void>;
 
 export function SetDevMode(arg1:boolean):Promise<void>;
 
@@ -100,6 +108,8 @@ export function SyncAll():Promise<void>;
 export function SyncNow(arg1:string):Promise<void>;
 
 export function ToggleHabit(arg1:string):Promise<void>;
+
+export function UnscheduleTask(arg1:string,arg2:string):Promise<void>;
 
 export function UpdateAllPlugins():Promise<void>;
 

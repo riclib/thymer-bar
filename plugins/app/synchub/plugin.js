@@ -1,4 +1,4 @@
-/* Sync Hub v46 - Generated from src/ - DO NOT EDIT DIRECTLY */
+/* Sync Hub v53 - Generated from src/ - DO NOT EDIT DIRECTLY */
 /* Run: make plugins */
 
 // === _00_helpers.js ===
@@ -53,9 +53,21 @@ const SyncHubHelpers = {
     const journalCollection = collections.find((c) => c.getName() === 'Journal');
     if (!journalCollection) return null;
 
-    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    // Use local date, not UTC (toISOString returns UTC)
+    const now = new Date();
+    const today = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
     const records = await journalCollection.getAllRecords();
-    return records.find((r) => r.guid.endsWith(today)) || null;
+    let journal = records.find((r) => r.guid.endsWith(today));
+
+    // Fallback: Thymer uses prev day until ~3am (for UI/PlannerHub)
+    if (!journal) {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayStr = `${yesterday.getFullYear()}${String(yesterday.getMonth() + 1).padStart(2, '0')}${String(yesterday.getDate()).padStart(2, '0')}`;
+      journal = records.find((r) => r.guid.endsWith(yesterdayStr));
+    }
+
+    return journal;
   },
 
   /**
@@ -1185,7 +1197,7 @@ const SyncHubConnect = {
   // ===========================================================================
 
   /**
-   * Get or create today's daily note (journal entry).
+   * Get today's daily note (journal entry) - strict mode, no fallback.
    * Returns the record with its line items (tasks).
    */
   async handleGetTodayJournal(data) {
@@ -1197,19 +1209,22 @@ const SyncHubConnect = {
     const records = await journalCollection.getAllRecords();
 
     // Journal GUIDs end with YYYYMMDD format (no hyphens)
-    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    let todayRecord = records.find((r) => r.guid.endsWith(today));
+    // Use local date, not UTC (toISOString returns UTC)
+    const now = new Date();
+    const today = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    const todayRecord = records.find((r) => r.guid.endsWith(today));
 
-    // Fallback: Thymer uses prev day until ~3am
+    // Strict: no fallback to yesterday - thymer-bar needs today's data only
     if (!todayRecord) {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayStr = yesterday.toISOString().slice(0, 10).replace(/-/g, '');
-      todayRecord = records.find((r) => r.guid.endsWith(yesterdayStr));
-    }
-
-    if (!todayRecord) {
-      throw new Error('No journal entry found for today');
+      // Return a structured response instead of throwing
+      return {
+        guid: null,
+        name: null,
+        date: today,
+        line_items: [],
+        reason: 'no-daily-note-for-today',
+        message: `No daily note found for ${today}. Please add a task to today's journal in Thymer.`,
+      };
     }
 
     // Get line items (with resolved ref titles)
@@ -1912,14 +1927,16 @@ const SyncHubPlanner = {
     if (!journalCollection) return null;
 
     const records = await journalCollection.getAllRecords();
-    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    // Use local date, not UTC (toISOString returns UTC)
+    const now = new Date();
+    const today = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
     let journal = records.find((r) => r.guid.endsWith(today));
 
     // Fallback: Thymer uses prev day until ~3am
     if (!journal) {
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayStr = yesterday.toISOString().slice(0, 10).replace(/-/g, '');
+      const yesterdayStr = `${yesterday.getFullYear()}${String(yesterday.getMonth() + 1).padStart(2, '0')}${String(yesterday.getDate()).padStart(2, '0')}`;
       journal = records.find((r) => r.guid.endsWith(yesterdayStr));
     }
 
@@ -2340,7 +2357,9 @@ const DailyNoteWatcher = {
    * Get journal with caching (avoids collection search every poll).
    */
   async getJournalCached() {
-    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    // Use local date, not UTC (toISOString returns UTC)
+    const now = new Date();
+    const today = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
 
     // Invalidate cache on day change
     if (this.journalDate !== today) {
@@ -2357,12 +2376,69 @@ const DailyNoteWatcher = {
   },
 
   /**
+   * Get today's journal - strict mode (no fallback to yesterday).
+   * Returns { journal, reason } where reason explains why journal is null.
+   */
+  async getTodayJournalStrict() {
+    if (!this.dataApi) {
+      console.log('[DailyNoteWatcher] getTodayJournalStrict: no dataApi');
+      return { journal: null, reason: 'no-data-api' };
+    }
+
+    const collections = await this.dataApi.getAllCollections();
+    const journalCollection = collections.find((c) => c.getName() === 'Journal');
+    if (!journalCollection) {
+      console.log('[DailyNoteWatcher] getTodayJournalStrict: no Journal collection');
+      return { journal: null, reason: 'no-journal-collection' };
+    }
+
+    // Use local date, not UTC (toISOString returns UTC)
+    const now = new Date();
+    const today = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    const records = await journalCollection.getAllRecords();
+    console.log('[DailyNoteWatcher] getTodayJournalStrict: looking for', today, 'in', records.length, 'records');
+
+    // Debug: show last 5 GUIDs
+    if (records.length > 0) {
+      const guids = records.slice(-5).map(r => r.guid);
+      console.log('[DailyNoteWatcher] last 5 journal GUIDs:', guids);
+    }
+
+    const journal = records.find((r) => r.guid.endsWith(today));
+
+    if (!journal) {
+      console.log('[DailyNoteWatcher] getTodayJournalStrict: NOT FOUND for', today);
+      return { journal: null, reason: 'no-daily-note-for-today', date: today };
+    }
+
+    console.log('[DailyNoteWatcher] getTodayJournalStrict: FOUND', journal.guid);
+    return { journal, reason: null };
+  },
+
+  /**
    * Build and send a full snapshot.
+   * Uses strict date matching - won't send yesterday's data as today's.
    */
   async sendSnapshot(manual = false) {
-    const journal = await window.syncHub?.getTodayJournal();
-    if (!journal) return;
+    const result = await this.getTodayJournalStrict();
+    if (!result.journal) {
+      if (manual) {
+        console.log('[DailyNoteWatcher] No daily note for today - please create it in Thymer');
+      }
+      // Send empty snapshot so thymer-bar knows we're connected but no data yet
+      if (window.syncHub?.isConnected?.()) {
+        window.syncHub.send({
+          type: 'dailynote.snapshot',
+          date: new Date().toISOString().slice(0, 10),
+          observedAt: new Date().toISOString(),
+          lines: [],
+          reason: result.reason,
+        });
+      }
+      return;
+    }
 
+    const journal = result.journal;
     const lineItems = await journal.getLineItems();
     if (!lineItems || lineItems.length === 0) return;
 
@@ -2591,6 +2667,10 @@ class Plugin extends CollectionPlugin {
           capabilities: ['tools', 'navigate'],
         });
         this.sendToolsManifest();
+        // Send daily note snapshot on connect
+        if (typeof DailyNoteWatcher !== 'undefined' && DailyNoteWatcher.sendSnapshot) {
+          setTimeout(() => DailyNoteWatcher.sendSnapshot(false), 500);
+        }
       },
       onMessage: (data) => this.handleMessage(data),
       scheduleReconnect: () => this.scheduleReconnect(),

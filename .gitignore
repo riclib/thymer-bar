@@ -37,3 +37,4 @@ coverage.out
 # Config with secrets
 config.toml
 *.env
+/thymer-bar

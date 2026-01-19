@@ -42,7 +42,13 @@ import {
     ResumeSession,
     CompleteSession,
     ToggleHabit,
-    NavigateToRecord
+    NavigateToRecord,
+    // Planning (drag-and-drop)
+    ScheduleTask,
+    UnscheduleTask,
+    ReorderTask,
+    ResizeTask,
+    GetPlannedSlots
 } from '../wailsjs/go/main/App';
 
 import { EventsOn } from '../wailsjs/runtime/runtime';
@@ -65,6 +71,17 @@ let sessionState = {
 };
 let timerInterval = null;
 let nowLineInterval = null;
+
+// Drag state for task planning
+let dragState = {
+    dragging: false,
+    taskGuid: null,
+    sourceType: null,  // 'queue' | 'timeline'
+    startTime: null,   // For timeline drags, the original start time
+    duration: 30,      // Duration in minutes (preserved during moves)
+    ghostEl: null,
+    dropPreview: null
+};
 
 // ============================================================================
 // Event Listeners
@@ -185,6 +202,9 @@ async function renderDashboard() {
 
         // Auto-scroll timeline to now
         scrollTimelineToNow();
+
+        // Set up drag and drop for planning
+        setupDragAndDrop();
     } catch (err) {
         console.error('Failed to render dashboard:', err);
         app.innerHTML = `
@@ -465,6 +485,574 @@ function showToast(message, type = 'info') {
 }
 
 // ============================================================================
+// Drag and Drop - Task Planning
+// ============================================================================
+
+function setupDragAndDrop() {
+    // Queue items are draggable
+    document.querySelectorAll('.db-q-item').forEach(item => {
+        item.setAttribute('draggable', 'true');
+        item.addEventListener('dragstart', handleDragStart);
+        item.addEventListener('dragend', handleDragEnd);
+    });
+
+    // Planned blocks in timeline are also draggable
+    document.querySelectorAll('.db-block.task.planned').forEach(block => {
+        block.addEventListener('dragstart', handleDragStart);
+        block.addEventListener('dragend', handleDragEnd);
+    });
+
+    // Timeline is a drop target
+    const timeline = document.querySelector('.db-timeline-grid');
+    if (timeline) {
+        timeline.addEventListener('dragover', handleDragOver);
+        timeline.addEventListener('dragleave', handleDragLeave);
+        timeline.addEventListener('drop', handleDrop);
+    }
+
+    // Document-level drag leave for unscheduling
+    document.addEventListener('dragend', handleDocumentDragEnd);
+
+    // Resize handles for planned blocks
+    document.querySelectorAll('.db-block-resize-handle').forEach(handle => {
+        handle.addEventListener('mousedown', handleResizeStart);
+    });
+
+    // Context menu for planned blocks
+    document.querySelectorAll('.db-block.task.planned').forEach(block => {
+        block.addEventListener('contextmenu', handleContextMenu);
+    });
+}
+
+function handleDragStart(e) {
+    const item = e.target.closest('.db-q-item, .db-block.task.planned');
+    if (!item) return;
+
+    const guid = item.dataset.guid;
+    const isPlanned = item.classList.contains('planned');
+    const title = item.querySelector('.db-q-title, .db-block-title')?.textContent || 'Task';
+    const existingDuration = item.dataset.duration ? parseInt(item.dataset.duration) : 30;
+
+    console.log('[drag] START', {
+        guid,
+        title: title.substring(0, 30),
+        sourceType: isPlanned ? 'timeline' : 'queue',
+        existingStartTime: item.dataset.startTime || null,
+        existingDuration
+    });
+
+    dragState = {
+        dragging: true,
+        taskGuid: guid,
+        sourceType: isPlanned ? 'timeline' : 'queue',
+        startTime: item.dataset.startTime || null,
+        duration: existingDuration,
+        ghostEl: null,
+        dropPreview: null
+    };
+
+    // Add dragging class
+    item.classList.add('dragging');
+
+    // Set drag data
+    e.dataTransfer.setData('text/plain', guid);
+    e.dataTransfer.effectAllowed = 'move';
+
+    // Create ghost element
+    dragState.ghostEl = createDragGhost(title);
+}
+
+function handleDragEnd(e) {
+    const item = e.target.closest('.db-q-item, .db-block.task.planned');
+    if (item) {
+        item.classList.remove('dragging');
+    }
+
+    // Clean up
+    cleanupDrag();
+}
+
+function handleDocumentDragEnd(e) {
+    // Check if dropped outside the planner area (unschedule)
+    if (dragState.dragging && dragState.sourceType === 'timeline') {
+        const timeline = document.querySelector('.db-timeline-grid');
+        const queue = document.querySelector('.db-queue-body');
+
+        if (timeline && queue) {
+            const timelineRect = timeline.getBoundingClientRect();
+            const queueRect = queue.getBoundingClientRect();
+
+            const x = e.clientX;
+            const y = e.clientY;
+
+            // If dropped outside both timeline and queue, unschedule
+            const inTimeline = x >= timelineRect.left && x <= timelineRect.right &&
+                              y >= timelineRect.top && y <= timelineRect.bottom;
+            const inQueue = x >= queueRect.left && x <= queueRect.right &&
+                           y >= queueRect.top && y <= queueRect.bottom;
+
+            if (!inTimeline && !inQueue && dragState.startTime) {
+                handleUnschedule(dragState.taskGuid, dragState.startTime);
+            }
+        }
+    }
+
+    cleanupDrag();
+}
+
+function handleDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+
+    const timeline = e.currentTarget;
+    timeline.classList.add('drag-over');
+
+    // Calculate drop position
+    const time = getTimeFromDropPosition(e.clientY, timeline);
+    updateDropPreview(timeline, time);
+}
+
+function handleDragLeave(e) {
+    const timeline = e.currentTarget;
+    const related = e.relatedTarget;
+
+    // Only remove highlight if leaving the timeline entirely
+    if (!timeline.contains(related)) {
+        timeline.classList.remove('drag-over');
+        removeDropPreview();
+    }
+}
+
+function handleDrop(e) {
+    e.preventDefault();
+
+    const timeline = e.currentTarget;
+    timeline.classList.remove('drag-over');
+
+    console.log('[drag] DROP event', {
+        clientY: e.clientY,
+        dragging: dragState.dragging,
+        taskGuid: dragState.taskGuid,
+        sourceType: dragState.sourceType,
+        existingStartTime: dragState.startTime
+    });
+
+    if (!dragState.dragging || !dragState.taskGuid) {
+        console.log('[drag] DROP aborted - no active drag state');
+        cleanupDrag();
+        return;
+    }
+
+    const time = getTimeFromDropPosition(e.clientY, timeline);
+    const startTime = formatTimeForBackend(time);
+
+    // Default duration: 30 minutes
+    const duration = 30;
+
+    // Check if this is in the past
+    const now = new Date();
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const isPast = time < nowMinutes;
+
+    // Check if this is a MOVE (from timeline) or ADD (from queue)
+    const isMove = dragState.sourceType === 'timeline' && dragState.startTime;
+
+    // For moves, preserve the original duration; for new schedules, use default 30
+    const effectiveDuration = isMove ? dragState.duration : duration;
+
+    console.log('[drag] DROP calculated', {
+        taskGuid: dragState.taskGuid,
+        dropMinutes: time,
+        startTime,
+        duration,
+        effectiveDuration,
+        dragStateDuration: dragState.duration,
+        nowMinutes,
+        isPast,
+        isMove,
+        oldStartTime: dragState.startTime,
+        intent: isMove
+            ? `MOVE from ${dragState.startTime} to ${startTime} (preserving ${effectiveDuration}min)`
+            : (isPast ? 'SCHEDULE_PAST (forgotten time)' : 'SCHEDULE_FUTURE')
+    });
+
+    // If moving from timeline, unschedule old slot first, then schedule new
+    if (isMove) {
+        handleMoveTask(dragState.taskGuid, dragState.startTime, startTime, effectiveDuration);
+    } else {
+        // Adding new slot from queue
+        handleSchedule(dragState.taskGuid, startTime, duration);
+    }
+
+    cleanupDrag();
+}
+
+function getTimeFromDropPosition(clientY, timeline) {
+    const rect = timeline.getBoundingClientRect();
+    // Get scroll from parent .db-timeline-body, not the grid itself
+    const timelineBody = timeline.closest('.db-timeline-body') || timeline.parentElement;
+    const scrollTop = timelineBody?.scrollTop || 0;
+    const relativeY = clientY - rect.top + scrollTop;
+
+    // Timeline is fixed at 1440px (1px per minute for 24 hours)
+    const totalHeight = 1440;
+    const minutesPerPixel = 1440 / totalHeight;
+    let rawMinutes = Math.round(relativeY * minutesPerPixel);
+
+    // Snap to 15-minute intervals
+    let minutes = Math.round(rawMinutes / 15) * 15;
+
+    // Clamp to valid range
+    minutes = Math.max(0, Math.min(1425, minutes)); // 23:45 max
+
+    console.log('[drag] getTimeFromDropPosition', {
+        clientY,
+        rectTop: rect.top,
+        scrollTop,
+        relativeY,
+        rawMinutes,
+        snappedMinutes: minutes,
+        asTime: formatTimeForBackend(minutes)
+    });
+
+    return minutes;
+}
+
+function formatTimeForBackend(minutes) {
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+}
+
+function createDragGhost(title) {
+    const ghost = document.createElement('div');
+    ghost.className = 'db-drag-ghost';
+    ghost.textContent = title.substring(0, 30) + (title.length > 30 ? '...' : '');
+    document.body.appendChild(ghost);
+
+    // Follow cursor
+    document.addEventListener('dragover', updateGhostPosition);
+
+    return ghost;
+}
+
+function updateGhostPosition(e) {
+    if (dragState.ghostEl) {
+        dragState.ghostEl.style.left = `${e.clientX + 10}px`;
+        dragState.ghostEl.style.top = `${e.clientY + 10}px`;
+    }
+}
+
+function updateDropPreview(timeline, minutes) {
+    if (!dragState.dropPreview) {
+        dragState.dropPreview = document.createElement('div');
+        dragState.dropPreview.className = 'db-drop-preview';
+        const blocksLayer = timeline.querySelector('.db-blocks-layer');
+        if (blocksLayer) {
+            blocksLayer.appendChild(dragState.dropPreview);
+        }
+    }
+
+    // Position preview (30 min default height)
+    const top = (minutes / 1440) * 100;
+    const height = (30 / 1440) * 100;
+    dragState.dropPreview.style.top = `${top}%`;
+    dragState.dropPreview.style.height = `${height}%`;
+
+    // Show time label
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    const displayHour = hours % 12 || 12;
+    dragState.dropPreview.textContent = `${displayHour}:${mins.toString().padStart(2, '0')} ${ampm}`;
+}
+
+function removeDropPreview() {
+    if (dragState.dropPreview) {
+        dragState.dropPreview.remove();
+        dragState.dropPreview = null;
+    }
+}
+
+function cleanupDrag() {
+    // Remove ghost
+    if (dragState.ghostEl) {
+        dragState.ghostEl.remove();
+    }
+
+    // Remove drop preview
+    removeDropPreview();
+
+    // Remove drag listener
+    document.removeEventListener('dragover', updateGhostPosition);
+
+    // Remove highlight
+    document.querySelector('.db-timeline-grid')?.classList.remove('drag-over');
+
+    // Reset state
+    dragState = {
+        dragging: false,
+        taskGuid: null,
+        sourceType: null,
+        startTime: null,
+        duration: 30,
+        ghostEl: null,
+        dropPreview: null
+    };
+}
+
+async function handleSchedule(guid, startTime, duration) {
+    console.log('[drag] SCHEDULE API call', {
+        guid,
+        startTime,
+        duration,
+        intent: 'ScheduleTask(guid, startTime, duration)'
+    });
+
+    try {
+        const result = await ScheduleTask(guid, startTime, duration);
+        console.log('[drag] SCHEDULE API success', { guid, startTime, result });
+        showToast('Task scheduled', 'success');
+        await renderDashboard();
+    } catch (err) {
+        console.error('[drag] SCHEDULE API error', { guid, startTime, error: err });
+        showToast(`Failed to schedule: ${err}`, 'error');
+    }
+}
+
+async function handleMoveTask(guid, oldStartTime, newStartTime, duration) {
+    console.log('[drag] MOVE API calls', {
+        guid,
+        oldStartTime,
+        newStartTime,
+        duration,
+        intent: `UnscheduleTask(${oldStartTime}) then ScheduleTask(${newStartTime})`
+    });
+
+    try {
+        // First unschedule the old slot
+        await UnscheduleTask(guid, oldStartTime);
+        console.log('[drag] MOVE - old slot unscheduled', { guid, oldStartTime });
+
+        // Then schedule the new slot
+        await ScheduleTask(guid, newStartTime, duration);
+        console.log('[drag] MOVE - new slot scheduled', { guid, newStartTime });
+
+        showToast('Task moved', 'success');
+        await renderDashboard();
+    } catch (err) {
+        console.error('[drag] MOVE API error', { guid, oldStartTime, newStartTime, error: err });
+        showToast(`Failed to move: ${err}`, 'error');
+        // Re-render to restore state
+        await renderDashboard();
+    }
+}
+
+async function handleUnschedule(guid, startTime) {
+    console.log('[drag] UNSCHEDULE API call', {
+        guid,
+        startTime,
+        intent: 'UnscheduleTask(guid, startTime)'
+    });
+
+    try {
+        const result = await UnscheduleTask(guid, startTime);
+        console.log('[drag] UNSCHEDULE API success', { guid, startTime, result });
+        showToast('Task unscheduled', 'success');
+        await renderDashboard();
+    } catch (err) {
+        console.error('[drag] UNSCHEDULE API error', { guid, startTime, error: err });
+        showToast(`Failed to unschedule: ${err}`, 'error');
+    }
+}
+
+// ============================================================================
+// Resize Handling
+// ============================================================================
+
+let resizeState = {
+    active: false,
+    block: null,
+    guid: null,
+    startTime: null,
+    startY: null,
+    startHeight: null
+};
+
+function handleResizeStart(e) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const block = e.target.closest('.db-block.task.planned');
+    if (!block) return;
+
+    resizeState = {
+        active: true,
+        block: block,
+        guid: block.dataset.guid,
+        startTime: block.dataset.startTime,
+        startY: e.clientY,
+        startHeight: block.offsetHeight
+    };
+
+    document.addEventListener('mousemove', handleResizeMove);
+    document.addEventListener('mouseup', handleResizeEnd);
+    block.classList.add('resizing');
+}
+
+function handleResizeMove(e) {
+    if (!resizeState.active) return;
+
+    const delta = e.clientY - resizeState.startY;
+    const newHeight = Math.max(15, resizeState.startHeight + delta); // Min 15px
+
+    // Convert to minutes (1px = 1min in the timeline)
+    const timeline = document.querySelector('.db-timeline-grid');
+    const totalHeight = timeline?.scrollHeight || 1440;
+    const minutesPerPixel = 1440 / totalHeight;
+    const newDuration = Math.round(newHeight * minutesPerPixel);
+
+    // Snap to 15-minute increments
+    const snappedDuration = Math.max(15, Math.round(newDuration / 15) * 15);
+
+    // Update visual height
+    const heightPercent = (snappedDuration / 1440) * 100;
+    resizeState.block.style.height = `${heightPercent}%`;
+
+    // Update duration display
+    const durEl = resizeState.block.querySelector('.db-block-dur');
+    if (durEl) {
+        durEl.textContent = formatDurationShort(snappedDuration * 60);
+    }
+}
+
+async function handleResizeEnd(e) {
+    if (!resizeState.active) return;
+
+    document.removeEventListener('mousemove', handleResizeMove);
+    document.removeEventListener('mouseup', handleResizeEnd);
+
+    resizeState.block?.classList.remove('resizing');
+
+    // Calculate final duration
+    const timeline = document.querySelector('.db-timeline-grid');
+    const totalHeight = timeline?.scrollHeight || 1440;
+    const minutesPerPixel = 1440 / totalHeight;
+    const newDuration = Math.round(resizeState.block.offsetHeight * minutesPerPixel);
+    const snappedDuration = Math.max(15, Math.round(newDuration / 15) * 15);
+
+    // Save to backend
+    try {
+        await ResizeTask(resizeState.guid, resizeState.startTime, snappedDuration);
+        // Don't refresh - visual is already updated
+    } catch (err) {
+        showToast(`Failed to resize: ${err}`, 'error');
+        await renderDashboard(); // Revert on error
+    }
+
+    resizeState = {
+        active: false,
+        block: null,
+        guid: null,
+        startTime: null,
+        startY: null,
+        startHeight: null
+    };
+}
+
+// ============================================================================
+// Context Menu
+// ============================================================================
+
+function handleContextMenu(e) {
+    e.preventDefault();
+
+    const block = e.target.closest('.db-block.task.planned');
+    if (!block) return;
+
+    const guid = block.dataset.guid;
+    const startTime = block.dataset.startTime;
+
+    showTaskContextMenu(e.clientX, e.clientY, guid, startTime);
+}
+
+function showTaskContextMenu(x, y, guid, startTime) {
+    // Remove any existing menu
+    document.querySelector('.db-context-menu')?.remove();
+
+    const menu = document.createElement('div');
+    menu.className = 'db-context-menu';
+    menu.innerHTML = `
+        <div class="db-context-item" data-action="grow-to-fit" data-guid="${guid}" data-start="${startTime}">
+            Grow to fit slot
+        </div>
+        <div class="db-context-item" data-action="unplan" data-guid="${guid}" data-start="${startTime}">
+            Unplan
+        </div>
+        <div class="db-context-divider"></div>
+        <div class="db-context-item" data-action="plan-rest" data-guid="${guid}">
+            Plan rest in free slots
+        </div>
+    `;
+
+    menu.style.left = `${x}px`;
+    menu.style.top = `${y}px`;
+
+    document.body.appendChild(menu);
+
+    // Handle clicks
+    menu.addEventListener('click', async (e) => {
+        const item = e.target.closest('.db-context-item');
+        if (!item) return;
+
+        const action = item.dataset.action;
+        const itemGuid = item.dataset.guid;
+        const itemStart = item.dataset.start;
+
+        menu.remove();
+
+        switch (action) {
+            case 'grow-to-fit':
+                await handleGrowToFit(itemGuid, itemStart);
+                break;
+            case 'unplan':
+                await handleUnschedule(itemGuid, itemStart);
+                break;
+            case 'plan-rest':
+                showToast('Auto-planning not yet implemented', 'info');
+                break;
+        }
+    });
+
+    // Close on click outside
+    setTimeout(() => {
+        document.addEventListener('click', closeContextMenu, { once: true });
+    }, 0);
+}
+
+function closeContextMenu() {
+    document.querySelector('.db-context-menu')?.remove();
+}
+
+async function handleGrowToFit(guid, startTime) {
+    // Find the current slot and calculate available space
+    // For now, double the duration or max to 2 hours
+    try {
+        const block = document.querySelector(`.db-block.task.planned[data-guid="${guid}"][data-start-time="${startTime}"]`);
+        if (!block) return;
+
+        const currentDuration = parseInt(block.dataset.duration) || 30;
+        const newDuration = Math.min(currentDuration * 2, 120);
+
+        await ResizeTask(guid, startTime, newDuration);
+        showToast('Task expanded', 'success');
+        await renderDashboard();
+    } catch (err) {
+        showToast(`Failed to expand: ${err}`, 'error');
+    }
+}
+
+// ============================================================================
 // Event Binding
 // ============================================================================
 
@@ -473,6 +1061,9 @@ let eventsBound = false;
 function bindEvents() {
     if (eventsBound) return;
     eventsBound = true;
+
+    // Set up drag and drop handlers
+    setupDragAndDrop();
 
     app.addEventListener('click', async (e) => {
         const target = e.target.closest('[data-action]');

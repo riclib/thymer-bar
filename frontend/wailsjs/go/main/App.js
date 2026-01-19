@@ -62,6 +62,10 @@ export function GetGoogleCalendarConfigHTML() {
   return window['go']['main']['App']['GetGoogleCalendarConfigHTML']();
 }
 
+export function GetPlannedSlots() {
+  return window['go']['main']['App']['GetPlannedSlots']();
+}
+
 export function GetPluginInfoHTML(arg1) {
   return window['go']['main']['App']['GetPluginInfoHTML'](arg1);
 }
@@ -134,12 +138,20 @@ export function RefreshPluginList() {
   return window['go']['main']['App']['RefreshPluginList']();
 }
 
+export function ReorderTask(arg1, arg2) {
+  return window['go']['main']['App']['ReorderTask'](arg1, arg2);
+}
+
 export function RerenderAll() {
   return window['go']['main']['App']['RerenderAll']();
 }
 
 export function RerenderSource(arg1) {
   return window['go']['main']['App']['RerenderSource'](arg1);
+}
+
+export function ResizeTask(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ResizeTask'](arg1, arg2, arg3);
 }
 
 export function ResumeSession() {
@@ -152,6 +164,10 @@ export function ResyncAll() {
 
 export function ResyncSource(arg1) {
   return window['go']['main']['App']['ResyncSource'](arg1);
+}
+
+export function ScheduleTask(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ScheduleTask'](arg1, arg2, arg3);
 }
 
 export function SetDevMode(arg1) {
@@ -196,6 +212,10 @@ export function SyncNow(arg1) {
 
 export function ToggleHabit(arg1) {
   return window['go']['main']['App']['ToggleHabit'](arg1);
+}
+
+export function UnscheduleTask(arg1, arg2) {
+  return window['go']['main']['App']['UnscheduleTask'](arg1, arg2);
 }
 
 export function UpdateAllPlugins() {

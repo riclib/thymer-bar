@@ -1978,8 +1978,7 @@ body:has(.dashboard) {
 /* New Timeline Grid (overlay-based positioning) */
 .db-timeline-grid {
     position: relative;
-    height: 100%;
-    min-height: 1440px; /* 24 hours * 60px/hour */
+    height: 1440px; /* Fixed: 24 hours * 60px/hour - percentages must be relative to this */
 }
 
 .db-hour-marker {
@@ -2051,7 +2050,7 @@ body:has(.dashboard) {
     left: 0;
     right: 0;
     pointer-events: auto;
-    min-height: 40px;
+    min-height: 15px; /* 15 minutes minimum for visibility */
     box-sizing: border-box;
 }
 
@@ -2992,4 +2991,194 @@ body:has(.dashboard) {
 .settings-content .plugin-manager,
 .settings-content .sync-manager {
     height: 100%;
+}
+
+/* ============================================================================
+   Drag and Drop - Task Planning
+   ============================================================================ */
+
+/* Pastel color palette for tasks (10 rotating colors) */
+.db-block.task.planned[data-color="0"] { --task-color: rgba(255, 179, 186, 0.4); }  /* Pink */
+.db-block.task.planned[data-color="1"] { --task-color: rgba(255, 223, 186, 0.4); }  /* Peach */
+.db-block.task.planned[data-color="2"] { --task-color: rgba(255, 255, 186, 0.4); }  /* Yellow */
+.db-block.task.planned[data-color="3"] { --task-color: rgba(186, 255, 201, 0.4); }  /* Mint */
+.db-block.task.planned[data-color="4"] { --task-color: rgba(186, 225, 255, 0.4); }  /* Sky */
+.db-block.task.planned[data-color="5"] { --task-color: rgba(186, 186, 255, 0.4); }  /* Lavender */
+.db-block.task.planned[data-color="6"] { --task-color: rgba(225, 186, 255, 0.4); }  /* Purple */
+.db-block.task.planned[data-color="7"] { --task-color: rgba(255, 186, 225, 0.4); }  /* Rose */
+.db-block.task.planned[data-color="8"] { --task-color: rgba(186, 255, 255, 0.4); }  /* Cyan */
+.db-block.task.planned[data-color="9"] { --task-color: rgba(255, 225, 186, 0.4); }  /* Tangerine */
+
+/* Planned task blocks (hatched pattern) */
+.db-block.task.planned {
+    --task-color: rgba(139, 176, 145, 0.3);
+    background: repeating-linear-gradient(
+        45deg,
+        var(--task-color),
+        var(--task-color) 4px,
+        transparent 4px,
+        transparent 8px
+    );
+    border-left: 3px solid var(--sage);
+    cursor: grab;
+}
+
+.db-block.task.planned:hover {
+    background: repeating-linear-gradient(
+        45deg,
+        var(--task-color),
+        var(--task-color) 4px,
+        rgba(255, 255, 255, 0.05) 4px,
+        rgba(255, 255, 255, 0.05) 8px
+    );
+}
+
+/* Completed planned blocks (solid fill) */
+.db-block.task.planned.completed {
+    background: var(--task-color);
+    opacity: 0.7;
+}
+
+/* Past planned blocks (solid fill - time has passed) */
+.db-block.task.planned.past {
+    background: var(--task-color);
+    opacity: 0.6;
+}
+
+/* Dragging state */
+.db-q-item.dragging,
+.db-block.task.planned.dragging {
+    opacity: 0.5;
+    cursor: grabbing;
+}
+
+/* Drag ghost (follows cursor) */
+.db-drag-ghost {
+    position: fixed;
+    pointer-events: none;
+    opacity: 0.9;
+    z-index: 1000;
+    background: var(--elevated);
+    border: 1px solid var(--sage);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: var(--text);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    max-width: 200px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Timeline drop zone highlight */
+.db-timeline-grid.drag-over {
+    background: linear-gradient(
+        to bottom,
+        transparent,
+        rgba(139, 176, 145, 0.05) 50%,
+        transparent
+    );
+}
+
+/* Drop preview (shows where task will be placed) */
+.db-drop-preview {
+    position: absolute;
+    left: 0;
+    right: 0;
+    background: rgba(139, 176, 145, 0.2);
+    border: 2px dashed var(--sage);
+    border-radius: 6px;
+    pointer-events: none;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    color: var(--sage);
+    font-weight: 500;
+}
+
+/* Resize handle */
+.db-block-resize-handle {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 8px;
+    cursor: ns-resize;
+    background: transparent;
+    transition: background 0.15s ease;
+}
+
+.db-block-resize-handle:hover,
+.db-block.task.planned.resizing .db-block-resize-handle {
+    background: rgba(139, 176, 145, 0.3);
+}
+
+.db-block.task.planned.resizing {
+    cursor: ns-resize;
+    user-select: none;
+}
+
+/* Context Menu */
+.db-context-menu {
+    position: fixed;
+    background: #1a1918;  /* Solid opaque background */
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 0;
+    min-width: 180px;
+    z-index: 1001;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    backdrop-filter: none;
+}
+
+.db-context-item {
+    padding: 10px 16px;
+    font-size: 12px;
+    color: var(--text);
+    cursor: pointer;
+    transition: background 0.1s ease;
+}
+
+.db-context-item:hover {
+    background: var(--hover);
+}
+
+.db-context-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 6px 0;
+}
+
+/* Unschedule cursor (when dragging outside planner area) */
+body.drag-outside-planner {
+    cursor: not-allowed;
+}
+
+/* Queue item hover effect when dragging */
+.db-q-item[draggable="true"] {
+    cursor: grab;
+}
+
+.db-q-item[draggable="true"]:hover {
+    border-color: var(--sage);
+}
+
+/* Conflict indicator (for blocked drops) */
+.db-drop-preview.conflict {
+    border-color: var(--coral);
+    background: rgba(196, 119, 106, 0.2);
+    color: var(--coral);
+}
+
+/* Planned task time badge in queue */
+.db-q-item .db-q-time-badge {
+    font-size: 10px;
+    color: var(--sage);
+    background: var(--sage-soft);
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-left: auto;
 }

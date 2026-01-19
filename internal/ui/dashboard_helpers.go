@@ -3,11 +3,11 @@ package ui
 import (
 	"fmt"
 	"html"
+	"log/slog"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
-
 )
 
 // Helper functions
@@ -183,6 +183,26 @@ func isTimePast(timeStr string) bool {
 	return eventMinutes < nowMinutes
 }
 
+// isSlotFullyPast checks if a planned slot (start + duration) is entirely in the past
+func isSlotFullyPast(startTime string, durationMinutes int) bool {
+	// Parse "HH:MM" format
+	var hour, minute int
+	_, err := fmt.Sscanf(startTime, "%d:%d", &hour, &minute)
+	if err != nil {
+		return false
+	}
+
+	// Calculate end time in minutes from midnight
+	startMinutes := hour*60 + minute
+	endMinutes := startMinutes + durationMinutes
+
+	// Compare to current time
+	now := time.Now()
+	nowMinutes := now.Hour()*60 + now.Minute()
+
+	return endMinutes <= nowMinutes
+}
+
 // renderMarkdownTitle converts markdown links to HTML with thymer: links styled
 // thymerLinkRe matches [title](thymer:GUID) markdown links
 var thymerLinkRe = regexp.MustCompile(`\[([^\]]+)\]\(thymer:([^)]+)\)`)
@@ -290,6 +310,46 @@ func formatDuration(seconds int) string {
 		return fmt.Sprintf("%ds", seconds)
 	}
 	minutes := seconds / 60
+	if minutes < 60 {
+		return fmt.Sprintf("%dm", minutes)
+	}
+	hours := minutes / 60
+	remainingMinutes := minutes % 60
+	if remainingMinutes == 0 {
+		return fmt.Sprintf("%dh", hours)
+	}
+	return fmt.Sprintf("%dh%dm", hours, remainingMinutes)
+}
+
+// plannedSlotStyle returns CSS style for positioning a planned slot block
+func plannedSlotStyle(startTime string, durationMinutes int) string {
+	// Parse "HH:MM" format
+	var hour, minute int
+	n, _ := fmt.Sscanf(startTime, "%d:%d", &hour, &minute)
+
+	minutesFromStart := hour*60 + minute
+	top := float64(minutesFromStart) / float64(timelineTotalMinutes) * 100
+	height := float64(durationMinutes) / float64(timelineTotalMinutes) * 100
+
+	// Minimum height for visibility
+	if height < 1 {
+		height = 1
+	}
+
+	slog.Debug("plannedSlotStyle",
+		"startTime", startTime,
+		"parsed", n,
+		"hour", hour,
+		"minute", minute,
+		"minutesFromStart", minutesFromStart,
+		"top%", top,
+		"height%", height)
+
+	return fmt.Sprintf("top: %.2f%%; height: %.2f%%;", top, height)
+}
+
+// formatMinutes formats minutes into a human-readable duration string
+func formatMinutes(minutes int) string {
 	if minutes < 60 {
 		return fmt.Sprintf("%dm", minutes)
 	}

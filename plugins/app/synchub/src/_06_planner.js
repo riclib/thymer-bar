@@ -507,14 +507,16 @@ const SyncHubPlanner = {
     if (!journalCollection) return null;
 
     const records = await journalCollection.getAllRecords();
-    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    // Use local date, not UTC (toISOString returns UTC)
+    const now = new Date();
+    const today = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
     let journal = records.find((r) => r.guid.endsWith(today));
 
     // Fallback: Thymer uses prev day until ~3am
     if (!journal) {
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayStr = yesterday.toISOString().slice(0, 10).replace(/-/g, '');
+      const yesterdayStr = `${yesterday.getFullYear()}${String(yesterday.getMonth() + 1).padStart(2, '0')}${String(yesterday.getDate()).padStart(2, '0')}`;
       journal = records.find((r) => r.guid.endsWith(yesterdayStr));
     }
 

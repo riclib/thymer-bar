@@ -36,6 +36,14 @@ type Task struct {
 	Time         string // "2pm" - scheduled time
 	ElapsedToday int    // seconds worked today
 	SessionCount int    // number of sessions today
+	PlannedSlots []PlannedSlot // multiple time slots from drag-drop
+	Color        int           // 0-9 for pastel rotation
+}
+
+// PlannedSlot represents a single scheduled time slot
+type PlannedSlot struct {
+	StartTime string // "14:00" (24h format)
+	Duration  int    // minutes
 }
 
 // Event represents a calendar event
@@ -168,27 +176,32 @@ templ Timeline(tasks []Task, events []Event, sessions []CompletedSession, curren
 					}
 				</div>
 			}
-			for _, task := range tasks {
-				if task.Time != "" {
-					<div
-						class={ "db-block", "task", templ.KV("current", task.Status == "in_progress"), templ.KV("past", isTimePast(task.Time)) }
-						style={ blockStyle(task.Time, task.Estimate) }
-						data-guid={ task.GUID }
-					>
-						<div class="db-block-dot"></div>
-						<div class="db-block-text">
-							<div class="db-block-title">@templ.Raw(renderMarkdownTitle(task.Title))</div>
-							if task.Source != "" {
-								<div class="db-block-sub">{ task.Source }</div>
-							}
-						</div>
-						if task.Estimate != "" {
-							<div class="db-block-dur">{ task.Estimate }</div>
+		<!-- Planned task blocks (from drag-drop scheduling) -->
+		for _, task := range tasks {
+			for _, slot := range task.PlannedSlots {
+				<div
+					class={ "db-block", "task", "planned", templ.KV("current", task.Status == "in_progress"), templ.KV("past", isSlotFullyPast(slot.StartTime, slot.Duration)) }
+					style={ plannedSlotStyle(slot.StartTime, slot.Duration) }
+					data-guid={ task.GUID }
+					data-start-time={ slot.StartTime }
+					data-duration={ fmt.Sprintf("%d", slot.Duration) }
+					data-color={ fmt.Sprintf("%d", task.Color) }
+					draggable="true"
+				>
+					<div class="db-block-dot"></div>
+					<div class="db-block-text">
+						<div class="db-block-title">@templ.Raw(renderMarkdownTitle(task.Title))</div>
+						if task.Source != "" {
+							<div class="db-block-sub">{ task.Source }</div>
 						}
 					</div>
-				}
+					<div class="db-block-dur">{ formatMinutes(slot.Duration) }</div>
+					<!-- Resize handle -->
+					<div class="db-block-resize-handle" data-resize="true"></div>
+				</div>
 			}
-			<!-- Completed session blocks (actual work done) -->
+		}
+		<!-- Completed session blocks (actual work done) -->
 			for i, session := range sessions {
 				<div
 					class={ "db-block", "session", "completed", sessionColumnClass(sessions, i) }

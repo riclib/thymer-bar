@@ -95,7 +95,15 @@ func DayStreamName(date time.Time) string {
 
 // TodayStreamName returns the stream name for today.
 func TodayStreamName() string {
-	return DayStreamName(time.Now())
+	now := time.Now()
+	zone, offset := now.Zone()
+	stream := DayStreamName(now)
+	slog.Debug("TodayStreamName called",
+		"now", now.Format(time.RFC3339),
+		"timezone", zone,
+		"offsetSeconds", offset,
+		"stream", stream)
+	return stream
 }
 
 // PublishToDay publishes an event to the day-partitioned stream.
@@ -229,9 +237,15 @@ func (c *Consumer) Stop() {
 // This should be called on startup to rebuild state before processing new events.
 func ReplayTodayEvents(js jetstream.JetStream, stream string, handler func(context.Context, *Event) error) error {
 	ctx := context.Background()
-	todaySubject := TodayStreamName()
+	now := time.Now()
+	zone, offset := now.Zone()
+	todaySubject := DayStreamName(now)
 
-	slog.Info("replaying today's events", "subject", todaySubject)
+	slog.Info("replaying today's events",
+		"subject", todaySubject,
+		"now", now.Format(time.RFC3339),
+		"timezone", zone,
+		"offsetSeconds", offset)
 
 	// Create a temporary ephemeral consumer to replay events
 	consumerName := fmt.Sprintf("replay-%d", time.Now().UnixNano())
