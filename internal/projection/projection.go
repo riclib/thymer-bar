@@ -93,57 +93,22 @@ func NewState(db *sqlite.DB, publisher *events.Publisher) *State {
 	}
 }
 
-// Initialize loads state from database.
+// Initialize prepares empty state for event replay.
+// State is rebuilt entirely from JetStream events - SQLite is only for analytics.
 func (s *State) Initialize(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	today := time.Now().Format("2006-01-02")
 	s.currentDate = today
+	s.TodayStats = &DailyStats{Date: today}
 
-	if s.db != nil {
-		// Load sessions from database
-		sessions, err := s.db.GetSessionsByDate(ctx, today)
-		if err != nil {
-			slog.Error("failed to load sessions from db", "error", err)
-		} else {
-			for _, dbSession := range sessions {
-				session := &Session{
-					ID:         dbSession.ID,
-					TaskGUID:   dbSession.TaskGUID,
-					TaskTitle:  dbSession.TaskTitle,
-					TaskSource: dbSession.TaskSource,
-					StartedAt:  dbSession.StartedAt,
-					EndedAt:    dbSession.EndedAt,
-					Elapsed:    dbSession.ElapsedSeconds,
-					Status:     dbSession.Status,
-				}
-				if session.Status == "active" || session.Status == "paused" {
-					s.CurrentSession = session
-				} else {
-					s.CompletedSessions = append(s.CompletedSessions, session)
-				}
-			}
-		}
+	// Sessions and stats will be rebuilt from event replay.
+	// SQLite is no longer read on startup - it's only for historical analytics.
+	// This ensures JetStream events are the single source of truth.
 
-		// Load stats
-		stats, err := s.db.GetDailyStats(ctx, today)
-		if err != nil {
-			slog.Error("failed to load daily stats from db", "error", err)
-		} else {
-			s.TodayStats = &DailyStats{
-				Date:           stats.Date,
-				TasksFound:     stats.TasksFound,
-				TasksCompleted: stats.TasksCompleted,
-				TotalSeconds:   stats.TotalSeconds,
-				SessionCount:   stats.SessionCount,
-			}
-		}
-	}
-
-	slog.Info("projection initialized",
-		"current_session", s.CurrentSession != nil,
-		"completed_sessions", len(s.CompletedSessions))
+	slog.Info("projection initialized (awaiting event replay)",
+		"date", today)
 
 	return nil
 }
@@ -187,30 +152,37 @@ func (s *State) StartSession(ctx context.Context, taskGUID, taskTitle, taskSourc
 	// If there's a paused session, move it to completed sessions to preserve elapsed time
 	if s.CurrentSession != nil && s.CurrentSession.Status == "paused" {
 		now := time.Now()
-		s.CurrentSession.Status = "completed"
-		s.CurrentSession.EndedAt = &now
-		s.CompletedSessions = append(s.CompletedSessions, s.CurrentSession)
+		prevSession := s.CurrentSession
+		prevSession.Status = "completed"
+		prevSession.EndedAt = &now
+		s.CompletedSessions = append(s.CompletedSessions, prevSession)
 
 		// Update stats
-		s.TodayStats.TotalSeconds += s.CurrentSession.Elapsed
+		s.TodayStats.TotalSeconds += prevSession.Elapsed
 		s.TodayStats.SessionCount++
 
-		// Publish event (maintains event sourcing integrity)
+		// Publish event (sync - required for event sourcing durability)
 		if s.publisher != nil {
 			s.publisher.PublishToDay(ctx, events.EventSessionCompleted, map[string]any{
-				"session_id":      s.CurrentSession.ID,
-				"task_guid":       s.CurrentSession.TaskGUID,
-				"elapsed_seconds": s.CurrentSession.Elapsed,
+				"session_id":      prevSession.ID,
+				"task_guid":       prevSession.TaskGUID,
+				"elapsed_seconds": prevSession.Elapsed,
 			})
 		}
 
-		// Persist the completed session
+		// Write to SQLite (async - just for analytics, not source of truth)
 		if s.db != nil {
-			s.db.UpdateSessionStatus(ctx, s.CurrentSession.ID, "completed", s.CurrentSession.Elapsed, &now)
-			s.db.IncrementDailyStats(ctx, s.currentDate, 0, s.CurrentSession.Elapsed, 1)
+			db := s.db
+			date := s.currentDate
+			elapsed := prevSession.Elapsed
+			sessionID := prevSession.ID
+			go func() {
+				db.UpdateSessionStatus(context.Background(), sessionID, "completed", elapsed, &now)
+				db.IncrementDailyStats(context.Background(), date, 0, elapsed, 1)
+			}()
 		}
 
-		slog.Info("paused session auto-completed", "id", s.CurrentSession.ID, "elapsed", s.CurrentSession.Elapsed)
+		slog.Info("paused session auto-completed", "id", prevSession.ID, "elapsed", prevSession.Elapsed)
 		s.CurrentSession = nil
 	}
 
@@ -225,26 +197,31 @@ func (s *State) StartSession(ctx context.Context, taskGUID, taskTitle, taskSourc
 	}
 	s.CurrentSession = session
 
-	// Publish event
+	// Publish event (sync - required for event sourcing durability)
 	if s.publisher != nil {
 		s.publisher.PublishToDay(ctx, events.EventSessionStarted, map[string]any{
-			"session_id": session.ID,
-			"task_guid":  taskGUID,
-			"task_title": taskTitle,
+			"session_id":  session.ID,
+			"task_guid":   taskGUID,
+			"task_title":  taskTitle,
+			"task_source": taskSource,
 		})
 	}
 
-	// Persist
+	// Write to SQLite (async - just for analytics)
 	if s.db != nil {
-		s.db.UpsertSession(ctx, &sqlite.Session{
-			ID:         session.ID,
-			TaskGUID:   taskGUID,
-			TaskTitle:  taskTitle,
-			TaskSource: taskSource,
-			StartedAt:  session.StartedAt,
-			Status:     "active",
-			Date:       s.currentDate,
-		})
+		db := s.db
+		date := s.currentDate
+		go func() {
+			db.UpsertSession(context.Background(), &sqlite.Session{
+				ID:         session.ID,
+				TaskGUID:   taskGUID,
+				TaskTitle:  taskTitle,
+				TaskSource: taskSource,
+				StartedAt:  session.StartedAt,
+				Status:     "active",
+				Date:       date,
+			})
+		}()
 	}
 
 	slog.Info("session started", "id", session.ID, "task", taskTitle)
@@ -266,18 +243,25 @@ func (s *State) PauseSession(ctx context.Context) error {
 	s.CurrentSession.PausedAt = &now
 	s.CurrentSession.Status = "paused"
 
+	sessionID := s.CurrentSession.ID
+
+	// Publish event (sync - required for event sourcing durability)
 	if s.publisher != nil {
 		s.publisher.PublishToDay(ctx, events.EventSessionPaused, map[string]any{
-			"session_id":      s.CurrentSession.ID,
+			"session_id":      sessionID,
 			"elapsed_seconds": elapsed,
 		})
 	}
 
+	// Write to SQLite (async - just for analytics)
 	if s.db != nil {
-		s.db.UpdateSessionStatus(ctx, s.CurrentSession.ID, "paused", elapsed, nil)
+		db := s.db
+		go func() {
+			db.UpdateSessionStatus(context.Background(), sessionID, "paused", elapsed, nil)
+		}()
 	}
 
-	slog.Info("session paused", "id", s.CurrentSession.ID, "elapsed", elapsed)
+	slog.Info("session paused", "id", sessionID, "elapsed", elapsed)
 	return nil
 }
 
@@ -294,17 +278,25 @@ func (s *State) ResumeSession(ctx context.Context) error {
 	s.CurrentSession.PausedAt = nil
 	s.CurrentSession.Status = "active"
 
+	sessionID := s.CurrentSession.ID
+	elapsed := s.CurrentSession.Elapsed
+
+	// Publish event (sync - required for event sourcing durability)
 	if s.publisher != nil {
 		s.publisher.PublishToDay(ctx, events.EventSessionResumed, map[string]any{
-			"session_id": s.CurrentSession.ID,
+			"session_id": sessionID,
 		})
 	}
 
+	// Write to SQLite (async - just for analytics)
 	if s.db != nil {
-		s.db.UpdateSessionStatus(ctx, s.CurrentSession.ID, "active", s.CurrentSession.Elapsed, nil)
+		db := s.db
+		go func() {
+			db.UpdateSessionStatus(context.Background(), sessionID, "active", elapsed, nil)
+		}()
 	}
 
-	slog.Info("session resumed", "id", s.CurrentSession.ID)
+	slog.Info("session resumed", "id", sessionID)
 	return nil
 }
 
@@ -336,6 +328,7 @@ func (s *State) CompleteSession(ctx context.Context) (*Session, error) {
 	s.TodayStats.TotalSeconds += elapsed
 	s.TodayStats.SessionCount++
 
+	// Publish event (sync - required for event sourcing durability)
 	if s.publisher != nil {
 		s.publisher.PublishToDay(ctx, events.EventSessionCompleted, map[string]any{
 			"session_id":      completed.ID,
@@ -344,9 +337,15 @@ func (s *State) CompleteSession(ctx context.Context) (*Session, error) {
 		})
 	}
 
+	// Write to SQLite (async - just for analytics)
 	if s.db != nil {
-		s.db.UpdateSessionStatus(ctx, completed.ID, "completed", elapsed, &now)
-		s.db.IncrementDailyStats(ctx, s.currentDate, 1, elapsed, 1)
+		db := s.db
+		date := s.currentDate
+		sessionID := completed.ID
+		go func() {
+			db.UpdateSessionStatus(context.Background(), sessionID, "completed", elapsed, &now)
+			db.IncrementDailyStats(context.Background(), date, 1, elapsed, 1)
+		}()
 	}
 
 	slog.Info("session completed", "id", completed.ID, "elapsed", elapsed)
@@ -511,13 +510,15 @@ func (s *State) Apply(event *events.Event) {
 		sessionID, _ := event.Data["session_id"].(string)
 		taskGUID, _ := event.Data["task_guid"].(string)
 		taskTitle, _ := event.Data["task_title"].(string)
+		taskSource, _ := event.Data["task_source"].(string)
 
 		s.CurrentSession = &Session{
-			ID:        sessionID,
-			TaskGUID:  taskGUID,
-			TaskTitle: taskTitle,
-			StartedAt: event.Timestamp,
-			Status:    "active",
+			ID:         sessionID,
+			TaskGUID:   taskGUID,
+			TaskTitle:  taskTitle,
+			TaskSource: taskSource,
+			StartedAt:  event.Timestamp,
+			Status:     "active",
 		}
 
 	case events.EventSessionPaused:

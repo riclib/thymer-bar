@@ -280,8 +280,38 @@ function startTimerTick() {
                     }
                 }
             }
+            // Update active session block in timeline
+            updateActiveSessionBlock();
         }
     }, 1000);
+}
+
+function updateActiveSessionBlock() {
+    const activeBlock = document.querySelector('.db-block.session.active');
+    if (!activeBlock) return;
+
+    const elapsed = sessionState.elapsed;
+
+    // Calculate position: start time is now minus elapsed
+    const now = new Date();
+    const startTime = new Date(now.getTime() - elapsed * 1000);
+    const startMinutes = startTime.getHours() * 60 + startTime.getMinutes();
+    const top = (startMinutes / 1440) * 100; // 1440 = 24 * 60
+
+    // Visual height: minimum 30 minutes, or actual elapsed if longer
+    const elapsedMinutes = elapsed / 60;
+    const visualMinutes = Math.max(elapsedMinutes, 30);
+    const height = (visualMinutes / 1440) * 100;
+
+    activeBlock.style.top = `${top.toFixed(2)}%`;
+    activeBlock.style.height = `${height.toFixed(2)}%`;
+    activeBlock.dataset.elapsed = elapsed;
+
+    // Update duration display
+    const durEl = activeBlock.querySelector('.db-active-dur');
+    if (durEl) {
+        durEl.textContent = formatDurationShort(elapsed);
+    }
 }
 
 function stopTimerTick() {

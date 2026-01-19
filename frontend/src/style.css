@@ -2144,6 +2144,45 @@ body:has(.dashboard) {
     background: var(--sage);
 }
 
+/* Active session: cross-hatched background to show ongoing work */
+.db-block.session.active {
+    background: repeating-linear-gradient(
+        45deg,
+        var(--sage-soft, rgba(139, 176, 145, 0.15)),
+        var(--sage-soft, rgba(139, 176, 145, 0.15)) 4px,
+        var(--sage-softer, rgba(139, 176, 145, 0.08)) 4px,
+        var(--sage-softer, rgba(139, 176, 145, 0.08)) 8px
+    );
+    border-left: 3px solid var(--sage);
+    border-style: solid;
+    border-width: 0 0 0 3px;
+    animation: db-active-pulse 3s ease-in-out infinite;
+}
+
+.db-block.session.active.paused {
+    animation: none;
+    opacity: 0.7;
+    background: repeating-linear-gradient(
+        45deg,
+        var(--steel-soft, rgba(150, 160, 170, 0.15)),
+        var(--steel-soft, rgba(150, 160, 170, 0.15)) 4px,
+        var(--steel-softer, rgba(150, 160, 170, 0.08)) 4px,
+        var(--steel-softer, rgba(150, 160, 170, 0.08)) 8px
+    );
+    border-left-color: var(--steel);
+}
+
+@keyframes db-active-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.85; }
+}
+
+/* Duration display for active session - updates in real-time */
+.db-block.session.active .db-active-dur {
+    font-weight: 500;
+    color: var(--sage);
+}
+
 .db-block-dot {
     width: 6px;
     height: 6px;
