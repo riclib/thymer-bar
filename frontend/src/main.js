@@ -39,6 +39,7 @@ import {
     GetConnectionStatus,
     StartSession,
     PauseSession,
+    ResumeSession,
     CompleteSession,
     ToggleHabit,
     NavigateToRecord
@@ -53,15 +54,17 @@ let selectedPluginId = null;
 let selectedSourceId = null;
 let wasConnected = false; // Track connection state for refresh on reconnect
 
-// Session state
+// Session state (synced with backend on dashboard render)
 let sessionState = {
     active: false,
+    paused: false,
     taskGuid: null,
     taskTitle: '',
     startTime: null,
     elapsed: 0
 };
 let timerInterval = null;
+let nowLineInterval = null;
 
 // ============================================================================
 // Event Listeners
@@ -141,22 +144,47 @@ async function init() {
 
 async function renderDashboard() {
     try {
+        // Get dashboard data to sync session state
+        const data = await GetDashboardData();
+
+        // Sync frontend session state with backend
+        if (data.session && (data.session.active || data.session.paused)) {
+            sessionState = {
+                active: data.session.active,
+                paused: data.session.paused,
+                taskGuid: data.session.taskGUID,
+                taskTitle: data.session.taskTitle,
+                startTime: Date.now() - (data.session.elapsed * 1000),
+                elapsed: data.session.elapsed
+            };
+            // Start timer if active (not paused)
+            if (data.session.active && !timerInterval) {
+                startTimerTick();
+            } else if (data.session.paused) {
+                stopTimerTick();
+            }
+        } else {
+            // No active session
+            sessionState = {
+                active: false,
+                paused: false,
+                taskGuid: null,
+                taskTitle: '',
+                startTime: null,
+                elapsed: 0
+            };
+            stopTimerTick();
+        }
+
         // Get pre-rendered HTML from Go/templ
         const html = await GetDashboardHTML();
         app.innerHTML = html;
 
-        // Auto-scroll timeline to now
-        setTimeout(() => {
-            const nowRow = document.querySelector('.db-hour-row.now');
-            if (nowRow) {
-                nowRow.scrollIntoView({ block: 'center', behavior: 'instant' });
-            }
-        }, 100);
+        // Start now line updates and auto-scroll
+        startNowLineUpdates();
 
-        // Start timer if session active
-        if (sessionState.active && !timerInterval) {
-            startTimerTick();
-        }
+        // Auto-scroll timeline to now
+        scrollTimelineToNow();
     } catch (err) {
         console.error('Failed to render dashboard:', err);
         app.innerHTML = `
@@ -220,6 +248,7 @@ function startTimerTick() {
     timerInterval = setInterval(() => {
         if (sessionState.active) {
             sessionState.elapsed++;
+            // Update focus panel timer
             const timerEl = document.getElementById('timer');
             if (timerEl) {
                 timerEl.textContent = formatTime(sessionState.elapsed);
@@ -231,6 +260,25 @@ function startTimerTick() {
             const ring = document.querySelector('.db-ring-progress');
             if (ring) {
                 ring.style.strokeDashoffset = offset;
+            }
+            // Update active task card's elapsed time
+            if (sessionState.taskGuid) {
+                const card = document.querySelector(`.db-q-item[data-guid="${sessionState.taskGuid}"]`);
+                if (card) {
+                    let elapsedEl = card.querySelector('.db-q-elapsed');
+                    if (!elapsedEl) {
+                        // Create elapsed element if it doesn't exist
+                        const emptyEl = card.querySelector('.db-q-elapsed-empty, .db-q-estimate');
+                        if (emptyEl) {
+                            elapsedEl = document.createElement('span');
+                            elapsedEl.className = 'db-q-elapsed';
+                            emptyEl.replaceWith(elapsedEl);
+                        }
+                    }
+                    if (elapsedEl) {
+                        elapsedEl.textContent = formatDurationShort(sessionState.elapsed);
+                    }
+                }
             }
         }
     }, 1000);
@@ -244,6 +292,59 @@ function stopTimerTick() {
 }
 
 // ============================================================================
+// Now Line Updates & Timeline Scrolling
+// ============================================================================
+
+function startNowLineUpdates() {
+    // Clear any existing interval
+    if (nowLineInterval) {
+        clearInterval(nowLineInterval);
+    }
+
+    // Update now line position immediately, then every minute
+    updateNowLinePosition();
+    nowLineInterval = setInterval(() => {
+        updateNowLinePosition();
+        scrollTimelineToNow(true); // Smooth scroll as time passes
+    }, 60000);
+}
+
+function updateNowLinePosition() {
+    const nowLine = document.querySelector('.db-now-line');
+    if (!nowLine) return;
+
+    const now = new Date();
+    const hour = now.getHours();
+    const minute = now.getMinutes();
+
+    // Timeline spans 24 hours (1440 minutes)
+    const minutesFromStart = hour * 60 + minute;
+    const percent = (minutesFromStart / 1440) * 100;
+    nowLine.style.top = `${percent.toFixed(2)}%`;
+}
+
+function scrollTimelineToNow(smooth = false) {
+    const timeline = document.querySelector('.db-timeline-body');
+    if (!timeline) return;
+
+    const now = new Date();
+    const hour = now.getHours();
+    const minute = now.getMinutes();
+
+    // Calculate pixel position (each hour = 60px)
+    const pixelPosition = (hour * 60) + minute;
+
+    // Center in viewport
+    const viewportHeight = timeline.clientHeight;
+    const scrollTarget = Math.max(0, pixelPosition - viewportHeight / 2);
+
+    timeline.scrollTo({
+        top: scrollTarget,
+        behavior: smooth ? 'smooth' : 'instant'
+    });
+}
+
+// ============================================================================
 // Utilities
 // ============================================================================
 
@@ -252,6 +353,15 @@ function formatTime(secs) {
     const m = Math.floor((secs % 3600) / 60);
     const s = secs % 60;
     return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+}
+
+function formatDurationShort(secs) {
+    if (secs < 60) return `${secs}s`;
+    const m = Math.floor(secs / 60);
+    if (m < 60) return `${m}m`;
+    const h = Math.floor(m / 60);
+    const remainingM = m % 60;
+    return remainingM > 0 ? `${h}h${remainingM}m` : `${h}h`;
 }
 
 function formatTimeShort(dateStr) {
@@ -359,11 +469,17 @@ function bindEvents() {
             case 'select-task':
                 await handleSelectTask(target.dataset.guid);
                 break;
+            case 'start-task':
+                await handleStartTask(target.dataset.guid);
+                break;
             case 'start-session':
                 await handleStartSession();
                 break;
             case 'pause-session':
                 await handlePauseSession();
+                break;
+            case 'resume-session':
+                await handleResumeSession();
                 break;
             case 'complete-session':
                 await handleCompleteSession();
@@ -469,17 +585,38 @@ function bindEvents() {
 // ============================================================================
 
 async function handleSelectTask(guid) {
-    // TODO: Start session with this task
-    sessionState = {
-        active: true,
-        taskGuid: guid,
-        taskTitle: 'Selected Task', // Get from backend
-        taskSource: '',
-        startTime: Date.now(),
-        elapsed: 0
-    };
-    startTimerTick();
-    updateFocusPanel();
+    // Legacy handler - now handled by start-task action
+    await handleStartTask(guid);
+}
+
+async function handleStartTask(guid) {
+    // If clicking the same task that's already active, do nothing
+    if (sessionState.active && sessionState.taskGuid === guid) {
+        return;
+    }
+
+    // Always try to pause any existing session first (backend knows the truth)
+    try {
+        await PauseSession();
+    } catch (err) {
+        // Ignore - might not have an active session
+    }
+
+    // Start a new session for this task
+    try {
+        await StartSession(guid);
+        sessionState.active = true;
+        sessionState.paused = false;
+        sessionState.taskGuid = guid;
+        sessionState.startTime = Date.now();
+        sessionState.elapsed = 0;
+        startTimerTick();
+        await renderDashboard();
+    } catch (err) {
+        showToast(`Failed to start session: ${err}`, 'error');
+        // Re-sync state from backend
+        await renderDashboard();
+    }
 }
 
 async function handleStartSession() {
@@ -499,9 +636,21 @@ async function handlePauseSession() {
         await PauseSession();
         sessionState.active = false;
         stopTimerTick();
-        updateFocusPanel();
+        await renderDashboard();
     } catch (err) {
         showToast(`Failed to pause: ${err}`, 'error');
+    }
+}
+
+async function handleResumeSession() {
+    try {
+        await ResumeSession();
+        sessionState.active = true;
+        sessionState.startTime = Date.now();
+        startTimerTick();
+        await renderDashboard();
+    } catch (err) {
+        showToast(`Failed to resume: ${err}`, 'error');
     }
 }
 

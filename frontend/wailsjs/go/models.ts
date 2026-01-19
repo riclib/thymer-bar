@@ -99,6 +99,8 @@ export namespace main {
 	    status: string;
 	    estimate?: string;
 	    scheduledTime?: string;
+	    elapsedToday?: number;
+	    sessionCount?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new DashboardTask(source);
@@ -112,6 +114,8 @@ export namespace main {
 	        this.status = source["status"];
 	        this.estimate = source["estimate"];
 	        this.scheduledTime = source["scheduledTime"];
+	        this.elapsedToday = source["elapsedToday"];
+	        this.sessionCount = source["sessionCount"];
 	    }
 	}
 	export class DashboardData {

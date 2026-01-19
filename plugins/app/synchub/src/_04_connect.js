@@ -395,32 +395,33 @@ const SyncHubConnect = {
         return;
       }
 
-      // Use UI API to navigate
+      // Find a main (non-sidebar) panel to open the record in
       const panels = ctx.ui?.getPanels() || [];
-      const activePanel = ctx.ui?.getActivePanel();
+      let mainPanel = panels.find(p => !p.isSidebar());
 
-      // Find a non-sidebar panel that's not the active one
-      let targetPanel = panels.find(p => p.getId() !== activePanel?.getId() && !p.isSidebar());
-
-      // If no other panel exists, create one
-      if (!targetPanel) {
-        targetPanel = await ctx.ui?.createPanel({ afterPanel: activePanel });
-        if (targetPanel) {
+      // If no main panel exists, create one
+      if (!mainPanel) {
+        mainPanel = await ctx.ui?.createPanel();
+        if (mainPanel) {
           console.log('[SyncHub] Navigate: created new panel');
         }
       }
 
-      if (targetPanel) {
-        // Navigate to the record - type "record" with subId as the record guid
-        targetPanel.navigateTo({
-          type: 'record',
-          rootId: null,
-          subId: guid,
-          workspaceGuid: null,
+      if (mainPanel) {
+        // Navigate to the record - try different type/id combinations
+        // Log current navigation to understand the format
+        const currentNav = mainPanel.getNavigation();
+        console.log('[SyncHub] Current panel navigation:', JSON.stringify(currentNav));
+
+        mainPanel.navigateTo({
+          type: 'document',
+          rootId: guid,
+          subId: null,
+          workspaceGuid: ctx.workspaceGuid,
         });
         console.log('[SyncHub] Navigate: opened record in panel:', guid);
       } else {
-        console.warn('[SyncHub] Navigate: could not create panel');
+        console.warn('[SyncHub] Navigate: could not find or create panel');
       }
     } else if (target.startsWith('http')) {
       window.open(target, '_blank');

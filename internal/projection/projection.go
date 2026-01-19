@@ -184,6 +184,36 @@ func (s *State) StartSession(ctx context.Context, taskGUID, taskTitle, taskSourc
 		return nil, fmt.Errorf("session already active")
 	}
 
+	// If there's a paused session, move it to completed sessions to preserve elapsed time
+	if s.CurrentSession != nil && s.CurrentSession.Status == "paused" {
+		now := time.Now()
+		s.CurrentSession.Status = "completed"
+		s.CurrentSession.EndedAt = &now
+		s.CompletedSessions = append(s.CompletedSessions, s.CurrentSession)
+
+		// Update stats
+		s.TodayStats.TotalSeconds += s.CurrentSession.Elapsed
+		s.TodayStats.SessionCount++
+
+		// Publish event (maintains event sourcing integrity)
+		if s.publisher != nil {
+			s.publisher.PublishToDay(ctx, events.EventSessionCompleted, map[string]any{
+				"session_id":      s.CurrentSession.ID,
+				"task_guid":       s.CurrentSession.TaskGUID,
+				"elapsed_seconds": s.CurrentSession.Elapsed,
+			})
+		}
+
+		// Persist the completed session
+		if s.db != nil {
+			s.db.UpdateSessionStatus(ctx, s.CurrentSession.ID, "completed", s.CurrentSession.Elapsed, &now)
+			s.db.IncrementDailyStats(ctx, s.currentDate, 0, s.CurrentSession.Elapsed, 1)
+		}
+
+		slog.Info("paused session auto-completed", "id", s.CurrentSession.ID, "elapsed", s.CurrentSession.Elapsed)
+		s.CurrentSession = nil
+	}
+
 	session := &Session{
 		ID:         uuid.New().String(),
 		TaskGUID:   taskGUID,
@@ -369,16 +399,54 @@ func (s *State) GetTodayStats() *DailyStats {
 }
 
 // GetTasksOrdered returns all tasks in queue order.
+// Merges tasks from Thymer push with tasks from session history for resilience.
 func (s *State) GetTasksOrdered() []*Task {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	tasks := make([]*Task, 0, len(s.TaskOrder))
+	// Build task map from multiple sources for resilience
+	taskMap := make(map[string]*Task)
+	var taskOrder []string
+	seen := make(map[string]bool)
+
+	// 1. First, add tasks from Thymer push (s.TaskOrder preserves Thymer's order)
 	for _, guid := range s.TaskOrder {
 		if task, exists := s.Tasks[guid]; exists {
 			copy := *task
-			tasks = append(tasks, &copy)
+			taskMap[guid] = &copy
+			taskOrder = append(taskOrder, guid)
+			seen[guid] = true
 		}
+	}
+
+	// 2. Add current session's task (if not already included)
+	if s.CurrentSession != nil && !seen[s.CurrentSession.TaskGUID] {
+		taskMap[s.CurrentSession.TaskGUID] = &Task{
+			GUID:     s.CurrentSession.TaskGUID,
+			Markdown: s.CurrentSession.TaskTitle,
+			Status:   "unchecked",
+		}
+		taskOrder = append(taskOrder, s.CurrentSession.TaskGUID)
+		seen[s.CurrentSession.TaskGUID] = true
+	}
+
+	// 3. Add tasks from completed sessions (if not already included)
+	for _, session := range s.CompletedSessions {
+		if !seen[session.TaskGUID] {
+			taskMap[session.TaskGUID] = &Task{
+				GUID:     session.TaskGUID,
+				Markdown: session.TaskTitle,
+				Status:   "unchecked",
+			}
+			taskOrder = append(taskOrder, session.TaskGUID)
+			seen[session.TaskGUID] = true
+		}
+	}
+
+	// Build final task list in order
+	tasks := make([]*Task, 0, len(taskOrder))
+	for _, guid := range taskOrder {
+		tasks = append(tasks, taskMap[guid])
 	}
 	return tasks
 }
@@ -577,9 +645,21 @@ func (s *State) ApplyLineSnapshot(ctx context.Context, snapshot *LineSnapshot) {
 		snapshotGUIDs[line.GUID] = true
 	}
 
+	// Build set of existing task orders to check for missing tasks
+	existingOrder := make(map[string]bool)
+	for _, guid := range s.TaskOrder {
+		existingOrder[guid] = true
+	}
+
 	// Process each line - compare with projection, publish if newer
 	for i, line := range snapshot.Lines {
 		existing := s.Tasks[line.GUID]
+
+		// Always ensure task is in TaskOrder (even if timestamps match)
+		if !existingOrder[line.GUID] {
+			s.TaskOrder = append(s.TaskOrder, line.GUID)
+			existingOrder[line.GUID] = true
+		}
 
 		if existing == nil || line.UpdatedAt.After(existing.UpdatedAt) {
 			// New or updated - publish event to day stream
@@ -601,7 +681,6 @@ func (s *State) ApplyLineSnapshot(ctx context.Context, snapshot *LineSnapshot) {
 					Status:    line.Status,
 					UpdatedAt: line.UpdatedAt,
 				}
-				s.TaskOrder = append(s.TaskOrder, line.GUID)
 				s.TodayStats.TasksFound++
 			} else {
 				existing.Markdown = line.Markdown
@@ -661,4 +740,47 @@ func (s *State) GetTodayTasks() map[string]*Task {
 		tasks[guid] = &copy
 	}
 	return tasks
+}
+
+// GetElapsedByTask returns the total elapsed seconds today for each task.
+// This sums all completed sessions plus any active/paused session for each task.
+func (s *State) GetElapsedByTask() map[string]int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	elapsed := make(map[string]int)
+
+	// Sum completed sessions
+	for _, session := range s.CompletedSessions {
+		elapsed[session.TaskGUID] += session.Elapsed
+	}
+
+	// Add current session (if any)
+	if s.CurrentSession != nil {
+		e := s.CurrentSession.Elapsed
+		if s.CurrentSession.Status == "active" {
+			e += int(time.Since(s.CurrentSession.StartedAt).Seconds())
+		}
+		elapsed[s.CurrentSession.TaskGUID] += e
+	}
+
+	return elapsed
+}
+
+// GetSessionCountByTask returns the number of sessions today for each task.
+func (s *State) GetSessionCountByTask() map[string]int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	counts := make(map[string]int)
+
+	for _, session := range s.CompletedSessions {
+		counts[session.TaskGUID]++
+	}
+
+	if s.CurrentSession != nil {
+		counts[s.CurrentSession.TaskGUID]++
+	}
+
+	return counts
 }

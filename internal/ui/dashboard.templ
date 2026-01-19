@@ -33,12 +33,14 @@ type CompletedSession struct {
 
 // Task represents a task item
 type Task struct {
-	GUID     string
-	Title    string
-	Source   string
-	Status   string // "pending", "in_progress", "done"
-	Estimate string // "30m", "1h", "2h"
-	Time     string // "2pm" - scheduled time
+	GUID         string
+	Title        string
+	Source       string
+	Status       string // "pending", "in_progress", "done"
+	Estimate     string // "30m", "1h", "2h"
+	Time         string // "2pm" - scheduled time
+	ElapsedToday int    // seconds worked today
+	SessionCount int    // number of sessions today
 }
 
 // Event represents a calendar event
@@ -69,11 +71,12 @@ type Stats struct {
 
 // Session represents the current work session
 type Session struct {
-	Active    bool
-	TaskGUID  string
-	TaskTitle string
+	Active     bool
+	Paused     bool
+	TaskGUID   string
+	TaskTitle  string
 	TaskSource string
-	Elapsed   int // seconds
+	Elapsed    int // seconds
 }
 
 // Dashboard renders the main dashboard view
@@ -94,7 +97,7 @@ templ Dashboard(data DashboardData) {
 
 		<!-- FOCUS -->
 		<div class="db-panel db-focus">
-			if data.Session != nil && data.Session.Active {
+			if data.Session != nil && (data.Session.Active || data.Session.Paused) {
 				@FocusActive(data.Session)
 			} else {
 				@FocusIdle()
@@ -108,7 +111,7 @@ templ Dashboard(data DashboardData) {
 				<span class="db-panel-meta">{ fmt.Sprintf("%d tasks", countPending(data.Tasks)) }</span>
 			</div>
 			<div class="db-queue-body">
-				@TaskQueue(data.Tasks)
+				@TaskQueue(data.Tasks, data.Session)
 			</div>
 		</div>
 
@@ -116,13 +119,21 @@ templ Dashboard(data DashboardData) {
 		<div class="db-panel db-ambient">
 			<div class="db-panel-head">
 				<span class="db-panel-label">Today</span>
-				<div class={ "db-connection", templ.KV("connected", data.Connected) }>
-					<span class="db-connection-dot"></span>
-					if data.Connected {
-						<span class="db-connection-text">Connected</span>
-					} else {
-						<span class="db-connection-text">Offline</span>
-					}
+				<div class="db-status-row">
+					<div class={ "db-connection", templ.KV("connected", data.Connected) }>
+						<span class="db-connection-dot"></span>
+						if data.Connected {
+							<span class="db-connection-text">Connected</span>
+						} else {
+							<span class="db-connection-text">Offline</span>
+						}
+					</div>
+					<button class="db-settings-btn" data-action="open-settings" title="Settings">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<circle cx="12" cy="12" r="3"/>
+							<path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+						</svg>
+					</button>
 				</div>
 			</div>
 			<div class="db-ambient-body">
@@ -136,7 +147,7 @@ templ Dashboard(data DashboardData) {
 templ Timeline(tasks []Task, events []Event, sessions []CompletedSession) {
 	<div class="db-timeline-grid">
 		<!-- Hour markers (background grid) -->
-		for hour := 6; hour <= 21; hour++ {
+		for hour := 0; hour < 24; hour++ {
 			<div class={ "db-hour-marker", templ.KV("now", isNow(hour)), templ.KV("past", isPast(hour)) }>
 				<div class="db-hour-num">{ formatHour(hour) }</div>
 				<div class="db-hour-line"></div>
@@ -183,16 +194,14 @@ templ Timeline(tasks []Task, events []Event, sessions []CompletedSession) {
 				}
 			}
 			<!-- Completed session blocks (actual work done) -->
-			for _, session := range sessions {
+			for i, session := range sessions {
 				<div
-					class="db-block session completed"
+					class={ "db-block", "session", "completed", sessionColumnClass(sessions, i) }
 					style={ sessionBlockStyle(session.StartedAt, session.Elapsed) }
 					data-session-id={ session.ID }
 				>
-					<div class="db-block-dot"></div>
 					<div class="db-block-text">
 						<div class="db-block-title">@templ.Raw(renderMarkdownTitle(session.TaskTitle))</div>
-						<div class="db-block-sub">completed</div>
 					</div>
 					<div class="db-block-dur">{ formatDuration(session.Elapsed) }</div>
 				</div>
@@ -238,20 +247,28 @@ templ BlocksAtHour(tasks []Task, events []Event, hour int) {
 	}
 }
 
-// FocusActive renders the focus panel when a session is active
+// FocusActive renders the focus panel when a session is active or paused
 templ FocusActive(session *Session) {
-	<div class="db-focus-status">
+	<div class={ "db-focus-status", templ.KV("paused", session.Paused) }>
 		<div class="db-focus-status-dot"></div>
-		<span class="db-focus-status-text">In Progress</span>
+		if session.Paused {
+			<span class="db-focus-status-text">Paused</span>
+		} else {
+			<span class="db-focus-status-text">In Progress</span>
+		}
 	</div>
 	<div class="db-focus-ring-wrap">
 		<svg class="db-focus-ring" viewBox="0 0 320 320">
 			<circle class="db-ring-bg" cx="160" cy="160" r="150"/>
-			<circle class="db-ring-progress" cx="160" cy="160" r="150" id="ring-progress"/>
+			<circle class={ "db-ring-progress", templ.KV("paused", session.Paused) } cx="160" cy="160" r="150" id="ring-progress"/>
 		</svg>
 		<div class="db-focus-center">
-			<div class="db-focus-time" id="timer">{ formatElapsed(session.Elapsed) }</div>
-			<div class="db-focus-unit">elapsed</div>
+			<div class={ "db-focus-time", templ.KV("paused", session.Paused) } id="timer">{ formatElapsed(session.Elapsed) }</div>
+			if session.Paused {
+				<div class="db-focus-unit">paused</div>
+			} else {
+				<div class="db-focus-unit">elapsed</div>
+			}
 		</div>
 	</div>
 	<div class="db-focus-task">@templ.Raw(renderMarkdownTitle(session.TaskTitle))</div>
@@ -259,8 +276,13 @@ templ FocusActive(session *Session) {
 		<div class="db-focus-source">{ session.TaskSource }</div>
 	}
 	<div class="db-focus-actions">
-		<button class="db-btn db-btn-ghost" data-action="pause-session">⏸ Pause</button>
-		<button class="db-btn db-btn-primary" data-action="complete-session">✓ Complete</button>
+		if session.Paused {
+			<button class="db-btn db-btn-primary" data-action="resume-session">▶ Resume</button>
+			<button class="db-btn db-btn-ghost" data-action="complete-session">✓ Complete</button>
+		} else {
+			<button class="db-btn db-btn-ghost" data-action="pause-session">⏸ Pause</button>
+			<button class="db-btn db-btn-primary" data-action="complete-session">✓ Complete</button>
+		}
 	</div>
 }
 
@@ -282,8 +304,8 @@ templ FocusIdle() {
 	</div>
 }
 
-// TaskQueue renders the task queue
-templ TaskQueue(tasks []Task) {
+// TaskQueue renders the task queue with inline session controls
+templ TaskQueue(tasks []Task, session *Session) {
 	if len(tasks) == 0 {
 		<div class="db-queue-empty">
 			<div class="db-queue-empty-icon">
@@ -297,49 +319,82 @@ templ TaskQueue(tasks []Task) {
 		</div>
 	} else {
 		// Show pending/in_progress first
-		for i, task := range tasks {
+		for _, task := range tasks {
 			if task.Status != "done" {
-				<div
-					class={ "db-q-item", templ.KV("next", i == 0 && task.Status != "in_progress") }
-					data-guid={ task.GUID }
-					data-action="select-task"
-				>
-					<div class="db-q-head">
-						<div class="db-q-title">@templ.Raw(renderMarkdownTitle(task.Title))</div>
-						if task.Time != "" {
-							<div class="db-q-time">{ task.Time }</div>
-						}
-					</div>
-					<div class="db-q-meta">
-						if task.Source != "" {
-							<span>{ task.Source }</span>
-						}
-						if task.Estimate != "" {
-							<span>~{ task.Estimate }</span>
-						}
-					</div>
-				</div>
+				@TaskCard(task, session)
 			}
 		}
-		// Show completed at the end
+		// Show completed at the end with divider
+		if hasDoneTasks(tasks) {
+			<div class="db-q-divider">
+				<span class="db-q-divider-text">Done</span>
+			</div>
+		}
 		for _, task := range tasks {
 			if task.Status == "done" {
-				<div
-					class="db-q-item done"
-					data-guid={ task.GUID }
-				>
-					<div class="db-q-head">
-						<div class="db-q-title">@templ.Raw(renderMarkdownTitle(task.Title))</div>
-					</div>
-					<div class="db-q-meta">
-						if task.Source != "" {
-							<span>{ task.Source }</span>
-						}
-					</div>
-				</div>
+				@TaskCardDone(task)
 			}
 		}
 	}
+}
+
+// TaskCard renders a single task card with session controls
+templ TaskCard(task Task, session *Session) {
+	<div
+		class={ "db-q-item", templ.KV("active", session != nil && session.TaskGUID == task.GUID && session.Active), templ.KV("paused", session != nil && session.TaskGUID == task.GUID && session.Paused) }
+		data-guid={ task.GUID }
+	>
+		<div class="db-q-title">@templ.Raw(renderMarkdownTitle(task.Title))</div>
+		<div class="db-q-footer">
+			<span class="db-q-source">{ task.Source }</span>
+			<div class="db-q-controls">
+				if session != nil && session.TaskGUID == task.GUID && session.Active {
+					// This task is actively running - show pause
+					<button class="db-q-btn" data-action="pause-session" data-guid={ task.GUID } title="Pause">
+						<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+							<rect x="6" y="4" width="4" height="16" rx="1"/>
+							<rect x="14" y="4" width="4" height="16" rx="1"/>
+						</svg>
+					</button>
+				} else if session != nil && session.TaskGUID == task.GUID && session.Paused {
+					// This task is paused - show play
+					<button class="db-q-btn" data-action="resume-session" data-guid={ task.GUID } title="Resume">
+						<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+							<path d="M8 5v14l11-7z"/>
+						</svg>
+					</button>
+				} else {
+					// No session or different task - show play to start
+					<button class="db-q-btn" data-action="start-task" data-guid={ task.GUID } title="Start">
+						<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+							<path d="M8 5v14l11-7z"/>
+						</svg>
+					</button>
+				}
+			</div>
+			if task.ElapsedToday > 0 {
+				<span class="db-q-elapsed">{ formatDuration(task.ElapsedToday) }</span>
+			} else if task.Estimate != "" {
+				<span class="db-q-estimate">~{ task.Estimate }</span>
+			} else {
+				<span class="db-q-elapsed-empty"></span>
+			}
+		</div>
+	</div>
+}
+
+// TaskCardDone renders a completed task card
+templ TaskCardDone(task Task) {
+	<div class="db-q-item done" data-guid={ task.GUID }>
+		<div class="db-q-title">@templ.Raw(renderMarkdownTitle(task.Title))</div>
+		<div class="db-q-footer">
+			<span class="db-q-source">{ task.Source }</span>
+			<div class="db-q-controls"></div>
+			if task.ElapsedToday > 0 {
+				<span class="db-q-elapsed">{ formatDuration(task.ElapsedToday) }</span>
+			}
+		</div>
+	</div>
 }
 
 // AmbientPanel renders the right sidebar with stats, calendar, habits
@@ -420,6 +475,15 @@ func countPending(tasks []Task) int {
 	return count
 }
 
+func hasDoneTasks(tasks []Task) bool {
+	for _, t := range tasks {
+		if t.Status == "done" {
+			return true
+		}
+	}
+	return false
+}
+
 func isPast(hour int) bool {
 	return hour < time.Now().Hour()
 }
@@ -459,10 +523,10 @@ func eventAtHour(event Event, hour int) bool {
 	return t.Hour() == hour
 }
 
-// Timeline constants: 6am to 9pm = 15 hours
-const timelineStartHour = 6
-const timelineEndHour = 21
-const timelineTotalMinutes = (timelineEndHour - timelineStartHour) * 60 // 900 minutes
+// Timeline constants: 24 hours (midnight to midnight)
+const timelineStartHour = 0
+const timelineEndHour = 24
+const timelineTotalMinutes = 24 * 60 // 1440 minutes
 
 // nowLinePosition returns CSS top position for current time indicator
 func nowLinePosition() string {
@@ -470,12 +534,7 @@ func nowLinePosition() string {
 	hour := now.Hour()
 	minute := now.Minute()
 
-	// If outside timeline range, hide it
-	if hour < timelineStartHour || hour >= timelineEndHour {
-		return "-100px"
-	}
-
-	minutesFromStart := (hour-timelineStartHour)*60 + minute
+	minutesFromStart := hour*60 + minute
 	percent := float64(minutesFromStart) / float64(timelineTotalMinutes) * 100
 	return fmt.Sprintf("%.2f%%", percent)
 }
@@ -506,16 +565,7 @@ func timeToPercent(timeStr string) float64 {
 
 	hour := t.Hour()
 	minute := t.Minute()
-
-	// Clamp to timeline range
-	if hour < timelineStartHour {
-		return 0
-	}
-	if hour >= timelineEndHour {
-		return 100
-	}
-
-	minutesFromStart := (hour-timelineStartHour)*60 + minute
+	minutesFromStart := hour*60 + minute
 	return float64(minutesFromStart) / float64(timelineTotalMinutes) * 100
 }
 
@@ -610,6 +660,35 @@ func renderMarkdownTitle(title string) string {
 	return result
 }
 
+// sessionColumnClass returns a CSS class for horizontal offset when sessions overlap
+func sessionColumnClass(sessions []CompletedSession, index int) string {
+	if index == 0 {
+		return ""
+	}
+
+	// Parse current session's start time
+	currentStart, err := time.Parse(time.RFC3339, sessions[index].StartedAt)
+	if err != nil {
+		return ""
+	}
+
+	// Check if this session overlaps with any previous session
+	for i := 0; i < index; i++ {
+		prevStart, err := time.Parse(time.RFC3339, sessions[i].StartedAt)
+		if err != nil {
+			continue
+		}
+		prevEnd := prevStart.Add(time.Duration(sessions[i].Elapsed) * time.Second)
+
+		// If current starts before previous ends, they overlap
+		if currentStart.Before(prevEnd) {
+			return "col-1" // Offset to the right
+		}
+	}
+
+	return ""
+}
+
 // sessionBlockStyle returns CSS style for positioning a completed session block
 func sessionBlockStyle(startedAt string, elapsedSeconds int) string {
 	// Parse RFC3339 start time
@@ -623,18 +702,13 @@ func sessionBlockStyle(startedAt string, elapsedSeconds int) string {
 	hour := local.Hour()
 	minute := local.Minute()
 
-	// Calculate position
-	if hour < timelineStartHour || hour >= timelineEndHour {
-		return "display: none;" // Outside visible range
-	}
-
-	minutesFromStart := (hour-timelineStartHour)*60 + minute
+	minutesFromStart := hour*60 + minute
 	top := float64(minutesFromStart) / float64(timelineTotalMinutes) * 100
 
 	// Calculate height based on elapsed time
 	height := float64(elapsedSeconds) / 60 / float64(timelineTotalMinutes) * 100
-	if height < 2 {
-		height = 2 // Minimum height for visibility
+	if height < 1 {
+		height = 1 // Minimum height for visibility
 	}
 
 	return fmt.Sprintf("top: %.2f%%; height: %.2f%%;", top, height)

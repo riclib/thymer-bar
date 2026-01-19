@@ -1894,38 +1894,70 @@ body:has(.dashboard) {
 }
 
 /* Connection status badge */
+/* Connection status + settings */
+.db-status-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .db-connection {
     display: flex;
     align-items: center;
     gap: 6px;
     font-size: 10px;
-    color: var(--text-muted);
     padding: 4px 10px;
     border-radius: 20px;
     background: var(--elevated);
+    /* Offline = amber by default */
+    color: var(--ember);
 }
 
 .db-connection-dot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--text-muted);
-    opacity: 0.5;
+    /* Offline = amber dot */
+    background: var(--ember);
+    box-shadow: 0 0 6px var(--ember-soft);
 }
 
 .db-connection.connected .db-connection-dot {
-    background: #4ade80;
-    opacity: 1;
-    box-shadow: 0 0 6px rgba(74, 222, 128, 0.5);
+    background: var(--sage);
+    box-shadow: 0 0 6px var(--sage-soft);
 }
 
 .db-connection.connected {
-    color: #4ade80;
+    color: var(--sage);
 }
 
 .db-connection-text {
     text-transform: uppercase;
     letter-spacing: 0.05em;
+}
+
+.db-settings-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+}
+
+.db-settings-btn:hover {
+    background: var(--hover);
+    color: var(--text);
+}
+
+.db-settings-btn svg {
+    width: 16px;
+    height: 16px;
 }
 
 /* Timeline */
@@ -1947,13 +1979,13 @@ body:has(.dashboard) {
 .db-timeline-grid {
     position: relative;
     height: 100%;
-    min-height: 900px; /* 15 hours * 60px/hour */
+    min-height: 1440px; /* 24 hours * 60px/hour */
 }
 
 .db-hour-marker {
     display: grid;
     grid-template-columns: 52px 1fr;
-    height: 60px; /* Each hour = 60px = 6.67% of 900px timeline */
+    height: 60px; /* Each hour = 60px */
     position: relative;
 }
 
@@ -2098,6 +2130,16 @@ body:has(.dashboard) {
     opacity: 0.85;
 }
 
+/* Horizontal offset for overlapping sessions */
+.db-block.session.col-1 {
+    left: 50%;
+    width: calc(50% - 8px);
+}
+
+.db-block.session:not(.col-1) {
+    width: calc(100% - 8px);
+}
+
 .db-block.session .db-block-dot {
     background: var(--sage);
 }
@@ -2208,6 +2250,25 @@ body:has(.dashboard) {
     letter-spacing: 0.15em;
     text-transform: uppercase;
     color: var(--sage);
+}
+
+/* Paused state styling */
+.db-focus-status.paused .db-focus-status-dot {
+    background: var(--text-muted);
+    animation: none;
+}
+
+.db-focus-status.paused .db-focus-status-text {
+    color: var(--text-muted);
+}
+
+.db-focus-time.paused {
+    opacity: 0.5;
+}
+
+.db-ring-progress.paused {
+    stroke: var(--text-muted);
+    opacity: 0.4;
 }
 
 .db-focus-ring-wrap {
@@ -2349,22 +2410,23 @@ body:has(.dashboard) {
     padding: 40px 20px;
 }
 
+/* Queue task cards */
 .db-q-item {
     background: var(--elevated);
-    border-radius: 6px;
+    border-radius: 8px;
     padding: 14px 16px;
     margin-bottom: 10px;
-    min-height: 44px;
-    cursor: pointer;
-    transition: transform 0.1s ease;
     border: 1px solid transparent;
+    transition: border-color 0.15s ease;
 }
 
-.db-q-item:active { transform: scale(0.98); }
+.db-q-item.active {
+    border-color: var(--sage);
+    background: linear-gradient(135deg, var(--elevated) 0%, var(--sage-soft) 100%);
+}
 
-.db-q-item.next {
-    border-color: var(--ember-soft);
-    background: linear-gradient(135deg, var(--elevated) 0%, var(--ember-soft) 100%);
+.db-q-item.paused {
+    border-color: var(--text-muted);
 }
 
 .db-q-item.done {
@@ -2376,35 +2438,110 @@ body:has(.dashboard) {
     color: var(--text-muted);
 }
 
-.db-q-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 10px;
-}
-
 .db-q-title {
     font-size: 13px;
     font-weight: 500;
     color: var(--text);
-    line-height: 1.35;
+    line-height: 1.4;
+    margin-bottom: 12px;
 }
 
-.db-q-time {
-    font-size: 10px;
-    color: var(--ember);
-    background: var(--ember-soft);
-    padding: 3px 8px;
-    border-radius: 4px;
-    flex-shrink: 0;
-}
-
-.db-q-meta {
-    font-size: 10px;
-    color: var(--text-muted);
-    margin-top: 6px;
+/* Footer: source | controls | elapsed */
+.db-q-footer {
     display: flex;
+    align-items: center;
+    justify-content: space-between;
     gap: 12px;
+}
+
+.db-q-source {
+    font-size: 11px;
+    color: var(--text-muted);
+    flex: 1;
+    min-width: 0;
+}
+
+.db-q-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.db-q-btn {
+    width: 64px;
+    height: 32px;
+    border-radius: 8px;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+}
+
+.db-q-btn:hover {
+    background: var(--hover);
+    color: var(--sage);
+}
+
+.db-q-btn svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* Active task has visible button */
+.db-q-item.active .db-q-btn {
+    color: var(--sage);
+}
+
+.db-q-item.active .db-q-btn:hover {
+    background: var(--sage-soft);
+}
+
+.db-q-elapsed {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--sage);
+    flex: 1;
+    text-align: right;
+}
+
+.db-q-estimate {
+    font-size: 11px;
+    color: var(--text-muted);
+    flex: 1;
+    text-align: right;
+}
+
+.db-q-elapsed-empty {
+    flex: 1;
+}
+
+/* Done section divider */
+.db-q-divider {
+    display: flex;
+    align-items: center;
+    margin: 16px 0 10px;
+    padding: 0 4px;
+}
+
+.db-q-divider::before,
+.db-q-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+}
+
+.db-q-divider-text {
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 0 12px;
 }
 
 /* Task Cards (templ-rendered) - matches sync-manager-prototype styling */

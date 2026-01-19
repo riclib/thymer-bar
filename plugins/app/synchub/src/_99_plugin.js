@@ -131,12 +131,17 @@ class Plugin extends CollectionPlugin {
   }
 
   handleMessage(data) {
+    // Get workspace GUID from an existing panel's navigation state
+    const panels = this.ui?.getPanels() || [];
+    const workspaceGuid = panels[0]?.getNavigation()?.workspaceGuid || null;
+
     SyncHubConnect.handleMessage(data, {
       ws: this.ws,
       data: this.data,
       ui: this.ui,
       collectionTools: this.collectionTools,
       sendToolsManifest: () => this.sendToolsManifest(),
+      workspaceGuid,
     });
   }
 

@@ -63,6 +63,8 @@ type DashboardTask struct {
 	Status        string `json:"status"` // pending, in_progress, done
 	Estimate      string `json:"estimate,omitempty"`
 	ScheduledTime string `json:"scheduledTime,omitempty"`
+	ElapsedToday  int    `json:"elapsedToday,omitempty"`  // seconds worked today
+	SessionCount  int    `json:"sessionCount,omitempty"`  // number of sessions today
 }
 
 // DashboardEvent represents a calendar event.
@@ -258,12 +260,14 @@ func (a *App) GetDashboardHTML() (string, error) {
 	// Convert tasks
 	for _, t := range data.Tasks {
 		uiData.Tasks = append(uiData.Tasks, ui.Task{
-			GUID:     t.GUID,
-			Title:    t.Title,
-			Source:   t.Source,
-			Status:   t.Status,
-			Estimate: t.Estimate,
-			Time:     t.ScheduledTime,
+			GUID:         t.GUID,
+			Title:        t.Title,
+			Source:       t.Source,
+			Status:       t.Status,
+			Estimate:     t.Estimate,
+			Time:         t.ScheduledTime,
+			ElapsedToday: t.ElapsedToday,
+			SessionCount: t.SessionCount,
 		})
 	}
 
@@ -306,6 +310,7 @@ func (a *App) GetDashboardHTML() (string, error) {
 	if data.Session != nil && (data.Session.Active || data.Session.Paused) {
 		uiData.Session = &ui.Session{
 			Active:    data.Session.Active,
+			Paused:    data.Session.Paused,
 			TaskGUID:  data.Session.TaskGUID,
 			TaskTitle: data.Session.TaskTitle,
 			Elapsed:   data.Session.Elapsed,
@@ -545,6 +550,8 @@ func (a *App) getTodayTasks() ([]DashboardTask, error) {
 	if a.projection != nil {
 		projTasks := a.projection.GetTodayTasksOrdered() // Use ordered version
 		currentSession := a.projection.GetCurrentSession()
+		elapsedByTask := a.projection.GetElapsedByTask()
+		sessionCounts := a.projection.GetSessionCountByTask()
 
 		for _, task := range projTasks {
 			status := "pending"
@@ -555,10 +562,12 @@ func (a *App) getTodayTasks() ([]DashboardTask, error) {
 			}
 
 			tasks = append(tasks, DashboardTask{
-				GUID:   task.GUID,
-				Title:  task.Markdown,
-				Source: "daily",
-				Status: status,
+				GUID:         task.GUID,
+				Title:        task.Markdown,
+				Source:       "daily",
+				Status:       status,
+				ElapsedToday: elapsedByTask[task.GUID],
+				SessionCount: sessionCounts[task.GUID],
 			})
 		}
 

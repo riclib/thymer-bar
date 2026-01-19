@@ -307,10 +307,23 @@ func (a *App) initProjection() {
 	// Initialize projection state (event-sourced in-memory state)
 	a.projection = projection.NewState(a.db, a.eventPublisher)
 
-	// Initialize from database
+	// Initialize from database (loads sessions)
 	ctx := context.Background()
 	if err := a.projection.Initialize(ctx); err != nil {
 		fmt.Printf("Failed to initialize projection: %v\n", err)
+	}
+
+	// Replay today's events from JetStream to rebuild task state
+	// This is the key event sourcing step - tasks come from replayed line.updated events
+	if a.nats != nil {
+		replayHandler := func(ctx context.Context, event *events.Event) error {
+			// Apply event to projection to rebuild state
+			a.projection.Apply(event)
+			return nil
+		}
+		if err := events.ReplayTodayEvents(a.nats.JetStream(), "DAYS", replayHandler); err != nil {
+			fmt.Printf("Failed to replay today's events: %v\n", err)
+		}
 	}
 
 	// Set up snapshot-based daily note sync from Thymer (preferred)

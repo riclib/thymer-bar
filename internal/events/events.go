@@ -224,3 +224,53 @@ func (c *Consumer) Start(ctx context.Context) error {
 func (c *Consumer) Stop() {
 	close(c.stopCh)
 }
+
+// ReplayTodayEvents fetches and replays all events from today's stream.
+// This should be called on startup to rebuild state before processing new events.
+func ReplayTodayEvents(js jetstream.JetStream, stream string, handler func(context.Context, *Event) error) error {
+	ctx := context.Background()
+	todaySubject := TodayStreamName()
+
+	slog.Info("replaying today's events", "subject", todaySubject)
+
+	// Create a temporary ephemeral consumer to replay events
+	consumerName := fmt.Sprintf("replay-%d", time.Now().UnixNano())
+	consumer, err := js.CreateOrUpdateConsumer(ctx, stream, jetstream.ConsumerConfig{
+		Name:          consumerName,
+		FilterSubject: todaySubject,
+		AckPolicy:     jetstream.AckNonePolicy, // Don't need acks for replay
+		DeliverPolicy: jetstream.DeliverAllPolicy,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create replay consumer: %w", err)
+	}
+
+	// Fetch all messages (with a reasonable limit)
+	msgs, err := consumer.Fetch(1000, jetstream.FetchMaxWait(2*time.Second))
+	if err != nil {
+		slog.Debug("no events to replay or fetch timeout", "error", err)
+		return nil // Not an error if no events
+	}
+
+	count := 0
+	for msg := range msgs.Messages() {
+		var event Event
+		if err := json.Unmarshal(msg.Data(), &event); err != nil {
+			slog.Error("failed to unmarshal event during replay", "error", err)
+			continue
+		}
+
+		// Process the event (replay mode - apply to state)
+		if err := handler(ctx, &event); err != nil {
+			slog.Error("failed to process event during replay", "type", event.Type, "error", err)
+			continue
+		}
+		count++
+	}
+
+	// Delete the temporary consumer
+	js.DeleteConsumer(ctx, stream, consumerName)
+
+	slog.Info("replayed events", "count", count, "subject", todaySubject)
+	return nil
+}
