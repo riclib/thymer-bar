@@ -1,4 +1,4 @@
-/* Sync Hub v29 */
+/* Sync Hub v42 */
 /* SyncHub Status Bar Styles */
 
 @keyframes synchub-pulse {
@@ -23,4 +23,16 @@
 .synchub-status.disconnected,
 .synchub-status.error {
   color: #f59e0b;
+}
+
+/* Daily Note Watcher (SPIKE) */
+.synchub-watcher {
+  font-size: 16px;
+  cursor: pointer;
+  color: #94a3b8;
+  transition: color 0.2s ease;
+}
+
+.synchub-watcher:hover {
+  color: #60a5fa;
 }

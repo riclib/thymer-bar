@@ -82,7 +82,7 @@ const SyncHubConnect = {
           await this.handleRequest(msg, ctx);
           break;
         case 'navigate':
-          this.handleNavigate(msg, ui);
+          this.handleNavigate(msg, ctx);
           break;
         case 'get_tools':
           sendToolsManifest();
@@ -381,12 +381,47 @@ const SyncHubConnect = {
     }
   },
 
-  handleNavigate(msg, ui) {
+  async handleNavigate(msg, ctx) {
     const { target } = msg;
     if (!target) return;
 
     if (target.startsWith('GUID:')) {
-      ui.getActivePanel()?.openRecord(target.slice(5));
+      const guid = target.slice(5);
+
+      // Verify the record exists
+      const record = ctx.data?.getRecord(guid);
+      if (!record) {
+        console.warn('[SyncHub] Navigate: record not found:', guid);
+        return;
+      }
+
+      // Use UI API to navigate
+      const panels = ctx.ui?.getPanels() || [];
+      const activePanel = ctx.ui?.getActivePanel();
+
+      // Find a non-sidebar panel that's not the active one
+      let targetPanel = panels.find(p => p.getId() !== activePanel?.getId() && !p.isSidebar());
+
+      // If no other panel exists, create one
+      if (!targetPanel) {
+        targetPanel = await ctx.ui?.createPanel({ afterPanel: activePanel });
+        if (targetPanel) {
+          console.log('[SyncHub] Navigate: created new panel');
+        }
+      }
+
+      if (targetPanel) {
+        // Navigate to the record - type "record" with subId as the record guid
+        targetPanel.navigateTo({
+          type: 'record',
+          rootId: null,
+          subId: guid,
+          workspaceGuid: null,
+        });
+        console.log('[SyncHub] Navigate: opened record in panel:', guid);
+      } else {
+        console.warn('[SyncHub] Navigate: could not create panel');
+      }
     } else if (target.startsWith('http')) {
       window.open(target, '_blank');
     }

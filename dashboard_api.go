@@ -12,35 +12,22 @@ import (
 	"time"
 
 	"thymer-bar/internal/config"
-	"thymer-bar/internal/events"
 	"thymer-bar/internal/ui"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// Dashboard state (in-memory, persisted to state file)
-type DashboardState struct {
+// HabitState tracks a habit for today.
+// Note: Habits remain file-based for now, sessions use projection.
+type HabitState struct {
 	mu       sync.RWMutex
-	Session  *SessionState `json:"session,omitempty"`
-	Habits   []HabitState  `json:"habits"`
-	Stats    DailyStats    `json:"stats"`
+	Date     string      `json:"date"`
+	Habits   []HabitData `json:"habits"`
 	filePath string
 }
 
-// SessionState tracks the current work session.
-type SessionState struct {
-	Active    bool      `json:"active"`
-	TaskGUID  string    `json:"task_guid"`
-	TaskTitle string    `json:"task_title"`
-	TaskSource string   `json:"task_source,omitempty"`
-	StartTime time.Time `json:"start_time"`
-	Elapsed   int       `json:"elapsed"` // seconds
-	Paused    bool      `json:"paused"`
-	PausedAt  *time.Time `json:"paused_at,omitempty"`
-}
-
-// HabitState tracks a habit for today.
-type HabitState struct {
+// HabitData represents a habit.
+type HabitData struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	Icon     string `json:"icon"`
@@ -49,22 +36,23 @@ type HabitState struct {
 	Progress int    `json:"progress"` // 0-100
 }
 
-// DailyStats tracks daily progress.
-type DailyStats struct {
+// DashboardData is returned to the frontend.
+type DashboardData struct {
+	Tasks     []DashboardTask  `json:"tasks"`
+	Events    []DashboardEvent `json:"events"`
+	Habits    []HabitData      `json:"habits"`
+	Stats     DashboardStats   `json:"stats"`
+	Session   *SessionData     `json:"session,omitempty"`
+	Sessions  []SessionData    `json:"sessions,omitempty"` // Completed sessions for timeline
+}
+
+// DashboardStats represents daily statistics.
+type DashboardStats struct {
 	Date      string `json:"date"` // YYYY-MM-DD
 	Planned   int    `json:"planned"`
 	Completed int    `json:"completed"`
 	Queued    int    `json:"queued"`
 	TotalTime int    `json:"total_time"` // seconds worked today
-}
-
-// DashboardData is returned to the frontend.
-type DashboardData struct {
-	Tasks  []DashboardTask  `json:"tasks"`
-	Events []DashboardEvent `json:"events"`
-	Habits []HabitData      `json:"habits"`
-	Stats  DailyStats       `json:"stats"`
-	Session *SessionData    `json:"session,omitempty"`
 }
 
 // DashboardTask represents a task for the dashboard.
@@ -87,61 +75,54 @@ type DashboardEvent struct {
 	Location string `json:"location,omitempty"`
 }
 
-// HabitData is sent to the frontend.
-type HabitData struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Icon     string `json:"icon"`
-	Type     string `json:"type"`
-	Done     bool   `json:"done"`
-	Progress int    `json:"progress"`
-}
-
 // SessionData is sent to the frontend.
 type SessionData struct {
+	ID         string `json:"id,omitempty"`
 	Active     bool   `json:"active"`
+	Paused     bool   `json:"paused,omitempty"`
 	TaskGUID   string `json:"taskGuid"`
 	TaskTitle  string `json:"taskTitle"`
 	TaskSource string `json:"taskSource,omitempty"`
 	Elapsed    int    `json:"elapsed"`
+	StartedAt  string `json:"startedAt,omitempty"`
+	EndedAt    string `json:"endedAt,omitempty"`
 }
 
-var dashboardState *DashboardState
+var habitState *HabitState
 
-func initDashboardState() error {
+func initHabitState() error {
 	stateDir := config.StateDir()
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		return err
 	}
 
-	dashboardState = &DashboardState{
+	habitState = &HabitState{
+		Date:     todayDate(),
 		Habits:   getDefaultHabits(),
-		Stats:    DailyStats{Date: todayDate()},
-		filePath: filepath.Join(stateDir, "dashboard.json"),
+		filePath: filepath.Join(stateDir, "habits.json"),
 	}
 
 	// Load existing state
-	data, err := os.ReadFile(dashboardState.filePath)
+	data, err := os.ReadFile(habitState.filePath)
 	if err == nil {
-		json.Unmarshal(data, dashboardState)
+		json.Unmarshal(data, habitState)
 	}
 
-	// Reset daily stats if it's a new day
-	if dashboardState.Stats.Date != todayDate() {
-		dashboardState.Stats = DailyStats{Date: todayDate()}
-		// Reset habits for new day
-		for i := range dashboardState.Habits {
-			dashboardState.Habits[i].Done = false
-			dashboardState.Habits[i].Progress = 0
+	// Reset habits if it's a new day
+	if habitState.Date != todayDate() {
+		habitState.Date = todayDate()
+		for i := range habitState.Habits {
+			habitState.Habits[i].Done = false
+			habitState.Habits[i].Progress = 0
 		}
-		dashboardState.save()
+		habitState.save()
 	}
 
 	return nil
 }
 
-func getDefaultHabits() []HabitState {
-	return []HabitState{
+func getDefaultHabits() []HabitData {
+	return []HabitData{
 		{ID: "exercise", Name: "Exercise", Icon: "🏃", Type: "virtue", Done: false, Progress: 0},
 		{ID: "read", Name: "Read", Icon: "📚", Type: "virtue", Done: false, Progress: 0},
 		{ID: "meditate", Name: "Meditate", Icon: "🧘", Type: "virtue", Done: false, Progress: 0},
@@ -153,7 +134,7 @@ func todayDate() string {
 	return time.Now().Format("2006-01-02")
 }
 
-func (s *DashboardState) save() error {
+func (s *HabitState) save() error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -170,16 +151,14 @@ func (s *DashboardState) save() error {
 
 // GetDashboardData returns all dashboard data.
 func (a *App) GetDashboardData() (*DashboardData, error) {
-	if dashboardState == nil {
-		if err := initDashboardState(); err != nil {
+	// Ensure habit state is initialized
+	if habitState == nil {
+		if err := initHabitState(); err != nil {
 			return nil, err
 		}
 	}
 
-	dashboardState.mu.RLock()
-	defer dashboardState.mu.RUnlock()
-
-	// Get tasks from today's plan (from Thymer via WebSocket or local bits)
+	// Get tasks from projection state or Thymer
 	tasks, err := a.getTodayTasks()
 	if err != nil {
 		tasks = []DashboardTask{}
@@ -191,41 +170,74 @@ func (a *App) GetDashboardData() (*DashboardData, error) {
 		events = []DashboardEvent{}
 	}
 
-	// Build habits data
-	habits := make([]HabitData, len(dashboardState.Habits))
-	for i, h := range dashboardState.Habits {
-		habits[i] = HabitData{
-			ID:       h.ID,
-			Name:     h.Name,
-			Icon:     h.Icon,
-			Type:     h.Type,
-			Done:     h.Done,
-			Progress: h.Progress,
-		}
-	}
+	// Get habits
+	habitState.mu.RLock()
+	habits := make([]HabitData, len(habitState.Habits))
+	copy(habits, habitState.Habits)
+	habitState.mu.RUnlock()
 
-	// Build session data
+	// Build session data from projection
 	var session *SessionData
-	if dashboardState.Session != nil && dashboardState.Session.Active {
-		// Calculate current elapsed time
-		elapsed := dashboardState.Session.Elapsed
-		if !dashboardState.Session.Paused {
-			elapsed += int(time.Since(dashboardState.Session.StartTime).Seconds())
+	var completedSessions []SessionData
+
+	if a.projection != nil {
+		// Get current session
+		if currentSession := a.projection.GetCurrentSession(); currentSession != nil {
+			session = &SessionData{
+				ID:         currentSession.ID,
+				Active:     currentSession.Status == "active",
+				Paused:     currentSession.Status == "paused",
+				TaskGUID:   currentSession.TaskGUID,
+				TaskTitle:  currentSession.TaskTitle,
+				TaskSource: currentSession.TaskSource,
+				Elapsed:    currentSession.Elapsed,
+				StartedAt:  currentSession.StartedAt.Format(time.RFC3339),
+			}
 		}
-		session = &SessionData{
-			Active:     true,
-			TaskGUID:   dashboardState.Session.TaskGUID,
-			TaskTitle:  dashboardState.Session.TaskTitle,
-			TaskSource: dashboardState.Session.TaskSource,
-			Elapsed:    elapsed,
+
+		// Get completed sessions for timeline
+		for _, sess := range a.projection.GetCompletedSessions() {
+			endedAt := ""
+			if sess.EndedAt != nil {
+				endedAt = sess.EndedAt.Format(time.RFC3339)
+			}
+			completedSessions = append(completedSessions, SessionData{
+				ID:         sess.ID,
+				Active:     false,
+				TaskGUID:   sess.TaskGUID,
+				TaskTitle:  sess.TaskTitle,
+				TaskSource: sess.TaskSource,
+				Elapsed:    sess.Elapsed,
+				StartedAt:  sess.StartedAt.Format(time.RFC3339),
+				EndedAt:    endedAt,
+			})
 		}
+
+		// Get stats from projection
+		stats := a.projection.GetTodayStats()
+
+		return &DashboardData{
+			Tasks:    tasks,
+			Events:   events,
+			Habits:   habits,
+			Stats:    DashboardStats{
+				Date:      stats.Date,
+				Planned:   len(tasks),
+				Completed: countCompleted(tasks),
+				Queued:    len(tasks) - countCompleted(tasks),
+				TotalTime: stats.TotalSeconds,
+			},
+			Session:  session,
+			Sessions: completedSessions,
+		}, nil
 	}
 
+	// Fallback if projection not initialized
 	return &DashboardData{
 		Tasks:   tasks,
 		Events:  events,
 		Habits:  habits,
-		Stats:   dashboardState.Stats,
+		Stats:   DashboardStats{Date: todayDate(), Planned: len(tasks), Completed: countCompleted(tasks), Queued: len(tasks) - countCompleted(tasks)},
 		Session: session,
 	}, nil
 }
@@ -246,10 +258,12 @@ func (a *App) GetDashboardHTML() (string, error) {
 	// Convert tasks
 	for _, t := range data.Tasks {
 		uiData.Tasks = append(uiData.Tasks, ui.Task{
-			GUID:   t.GUID,
-			Title:  t.Title,
-			Source: t.Source,
-			Status: t.Status,
+			GUID:     t.GUID,
+			Title:    t.Title,
+			Source:   t.Source,
+			Status:   t.Status,
+			Estimate: t.Estimate,
+			Time:     t.ScheduledTime,
 		})
 	}
 
@@ -281,21 +295,33 @@ func (a *App) GetDashboardHTML() (string, error) {
 		})
 	}
 
-	// Calculate real stats from tasks
+	// Stats from data
 	uiData.Stats = ui.Stats{
-		Planned:   len(data.Tasks),
-		Completed: countCompleted(data.Tasks),
-		Queued:    len(data.Tasks) - countCompleted(data.Tasks),
+		Planned:   data.Stats.Planned,
+		Completed: data.Stats.Completed,
+		Queued:    data.Stats.Queued,
 	}
 
 	// Convert session
-	if data.Session != nil && data.Session.Active {
+	if data.Session != nil && (data.Session.Active || data.Session.Paused) {
 		uiData.Session = &ui.Session{
-			Active:    true,
+			Active:    data.Session.Active,
 			TaskGUID:  data.Session.TaskGUID,
 			TaskTitle: data.Session.TaskTitle,
 			Elapsed:   data.Session.Elapsed,
 		}
+	}
+
+	// Convert completed sessions for timeline
+	for _, s := range data.Sessions {
+		uiData.Sessions = append(uiData.Sessions, ui.CompletedSession{
+			ID:        s.ID,
+			TaskGUID:  s.TaskGUID,
+			TaskTitle: s.TaskTitle,
+			StartedAt: s.StartedAt,
+			EndedAt:   s.EndedAt,
+			Elapsed:   s.Elapsed,
+		})
 	}
 
 	var buf bytes.Buffer
@@ -328,149 +354,113 @@ func (a *App) GetCalendarEvents() ([]DashboardEvent, error) {
 
 // StartSession starts a work session for a task.
 func (a *App) StartSession(taskGUID string) error {
-	if dashboardState == nil {
-		if err := initDashboardState(); err != nil {
-			return err
-		}
+	if a.projection == nil {
+		return fmt.Errorf("projection not initialized")
 	}
 
-	// Get task info (from Thymer or local)
+	// Get task info from projection state or Thymer
 	taskTitle := "Task"
-	taskSource := ""
+	taskSource := "daily"
 
-	// Try to get task info from bits table
-	if a.db != nil {
-		ctx := context.Background()
-		bits, err := a.db.GetAllBits(ctx)
-		if err == nil {
-			for _, b := range bits {
-				// Match by Thymer GUID if we have a ref
-				// For now, just use the title from the GUID
-				if b.MasterURI == taskGUID || b.GetString("thymer_guid") == taskGUID {
-					taskTitle = b.Title()
-					taskSource = b.GetString("source")
-					break
-				}
-			}
+	// Try to get task title from projection's daily tasks
+	if tasks := a.projection.GetTodayTasks(); tasks != nil {
+		if task, exists := tasks[taskGUID]; exists {
+			taskTitle = task.Markdown
 		}
 	}
 
-	dashboardState.mu.Lock()
-	dashboardState.Session = &SessionState{
-		Active:    true,
-		TaskGUID:  taskGUID,
-		TaskTitle: taskTitle,
-		TaskSource: taskSource,
-		StartTime: time.Now(),
-		Elapsed:   0,
-		Paused:    false,
+	// Start session via projection (which publishes events)
+	ctx := context.Background()
+	session, err := a.projection.StartSession(ctx, taskGUID, taskTitle, taskSource)
+	if err != nil {
+		return err
 	}
-	dashboardState.mu.Unlock()
 
 	// Emit session update to frontend
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "session:update", map[string]any{
 			"active":     true,
-			"taskGuid":   taskGUID,
-			"taskTitle":  taskTitle,
-			"taskSource": taskSource,
+			"taskGuid":   session.TaskGUID,
+			"taskTitle":  session.TaskTitle,
+			"taskSource": session.TaskSource,
 			"elapsed":    0,
 		})
 	}
 
-	return dashboardState.save()
+	return nil
 }
 
 // PauseSession pauses the current work session.
 func (a *App) PauseSession() error {
-	if dashboardState == nil || dashboardState.Session == nil {
-		return fmt.Errorf("no active session")
+	if a.projection == nil {
+		return fmt.Errorf("projection not initialized")
 	}
 
-	dashboardState.mu.Lock()
-	if !dashboardState.Session.Paused {
-		// Calculate elapsed time up to now
-		dashboardState.Session.Elapsed += int(time.Since(dashboardState.Session.StartTime).Seconds())
-		dashboardState.Session.Paused = true
-		now := time.Now()
-		dashboardState.Session.PausedAt = &now
+	ctx := context.Background()
+	if err := a.projection.PauseSession(ctx); err != nil {
+		return err
 	}
-	dashboardState.mu.Unlock()
+
+	// Get updated session info
+	session := a.projection.GetCurrentSession()
+	elapsed := 0
+	if session != nil {
+		elapsed = session.Elapsed
+	}
 
 	// Emit session update to frontend
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "session:update", map[string]any{
 			"active":  false,
-			"elapsed": dashboardState.Session.Elapsed,
+			"paused":  true,
+			"elapsed": elapsed,
 		})
 	}
 
-	return dashboardState.save()
+	return nil
 }
 
 // ResumeSession resumes a paused session.
 func (a *App) ResumeSession() error {
-	if dashboardState == nil || dashboardState.Session == nil {
-		return fmt.Errorf("no active session")
+	if a.projection == nil {
+		return fmt.Errorf("projection not initialized")
 	}
 
-	dashboardState.mu.Lock()
-	if dashboardState.Session.Paused {
-		dashboardState.Session.Paused = false
-		dashboardState.Session.StartTime = time.Now()
-		dashboardState.Session.PausedAt = nil
+	ctx := context.Background()
+	if err := a.projection.ResumeSession(ctx); err != nil {
+		return err
 	}
-	dashboardState.mu.Unlock()
+
+	// Get updated session info
+	session := a.projection.GetCurrentSession()
+	if session == nil {
+		return fmt.Errorf("no session to resume")
+	}
 
 	// Emit session update to frontend
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "session:update", map[string]any{
 			"active":     true,
-			"taskGuid":   dashboardState.Session.TaskGUID,
-			"taskTitle":  dashboardState.Session.TaskTitle,
-			"taskSource": dashboardState.Session.TaskSource,
-			"elapsed":    dashboardState.Session.Elapsed,
+			"taskGuid":   session.TaskGUID,
+			"taskTitle":  session.TaskTitle,
+			"taskSource": session.TaskSource,
+			"elapsed":    session.Elapsed,
 		})
 	}
 
-	return dashboardState.save()
+	return nil
 }
 
 // CompleteSession completes the current session and marks the task as done.
 func (a *App) CompleteSession(taskGUID string, elapsed int) error {
-	if dashboardState == nil {
-		if err := initDashboardState(); err != nil {
-			return err
-		}
+	if a.projection == nil {
+		return fmt.Errorf("projection not initialized")
 	}
 
-	dashboardState.mu.Lock()
-	taskTitle := ""
-	if dashboardState.Session != nil {
-		taskTitle = dashboardState.Session.TaskTitle
-	}
-	// Update stats
-	dashboardState.Stats.Completed++
-	dashboardState.Stats.TotalTime += elapsed
-
-	// Clear session
-	dashboardState.Session = nil
-	dashboardState.mu.Unlock()
-
-	// Publish task completion event to JetStream (resilient - queued if Thymer offline)
-	if a.eventPublisher != nil {
-		ctx := context.Background()
-		err := a.eventPublisher.Publish(ctx, events.EventTaskCompleted, map[string]any{
-			"task_guid":  taskGUID,
-			"task_title": taskTitle,
-			"elapsed":    elapsed,
-			"completed":  time.Now().Format(time.RFC3339),
-		})
-		if err != nil {
-			slog.Error("failed to publish task completion event", "error", err)
-		} else {
-			slog.Info("task completion event published", "guid", taskGUID)
-		}
+	ctx := context.Background()
+	_, err := a.projection.CompleteSession(ctx)
+	if err != nil {
+		return err
 	}
 
 	// Emit session update to frontend
@@ -480,49 +470,112 @@ func (a *App) CompleteSession(taskGUID string, elapsed int) error {
 		})
 	}
 
-	return dashboardState.save()
+	return nil
 }
 
 // ToggleHabit toggles a habit's completion status.
 func (a *App) ToggleHabit(habitID string) error {
-	if dashboardState == nil {
-		if err := initDashboardState(); err != nil {
+	if habitState == nil {
+		if err := initHabitState(); err != nil {
 			return err
 		}
 	}
 
-	dashboardState.mu.Lock()
-	for i := range dashboardState.Habits {
-		if dashboardState.Habits[i].ID == habitID {
-			dashboardState.Habits[i].Done = !dashboardState.Habits[i].Done
-			if dashboardState.Habits[i].Done {
-				dashboardState.Habits[i].Progress = 100
+	habitState.mu.Lock()
+	for i := range habitState.Habits {
+		if habitState.Habits[i].ID == habitID {
+			habitState.Habits[i].Done = !habitState.Habits[i].Done
+			if habitState.Habits[i].Done {
+				habitState.Habits[i].Progress = 100
 			} else {
-				dashboardState.Habits[i].Progress = 0
+				habitState.Habits[i].Progress = 0
 			}
 			break
 		}
 	}
-	dashboardState.mu.Unlock()
+	habitState.mu.Unlock()
 
-	return dashboardState.save()
+	return habitState.save()
+}
+
+// GetSessionHistory returns session history for a date range.
+func (a *App) GetSessionHistory(date string) ([]SessionData, error) {
+	if a.db == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+
+	ctx := context.Background()
+	sessions, err := a.db.GetSessionsByDate(ctx, date)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []SessionData
+	for _, s := range sessions {
+		endedAt := ""
+		if s.EndedAt != nil {
+			endedAt = s.EndedAt.Format(time.RFC3339)
+		}
+		result = append(result, SessionData{
+			ID:         s.ID,
+			Active:     s.Status == "active",
+			Paused:     s.Status == "paused",
+			TaskGUID:   s.TaskGUID,
+			TaskTitle:  s.TaskTitle,
+			TaskSource: s.TaskSource,
+			Elapsed:    s.ElapsedSeconds,
+			StartedAt:  s.StartedAt.Format(time.RFC3339),
+			EndedAt:    endedAt,
+		})
+	}
+
+	return result, nil
 }
 
 // =============================================================================
 // Internal helpers
 // =============================================================================
 
-// getTodayTasks fetches tasks for today from Thymer's daily note and local bits.
+// getTodayTasks fetches tasks for today from projection state or Thymer.
 func (a *App) getTodayTasks() ([]DashboardTask, error) {
 	var tasks []DashboardTask
 	ctx := context.Background()
 
-	// PRIMARY: Get tasks from Thymer's daily note (READ path via WebSocket)
+	// First, try to get tasks from projection state (populated by push from Thymer)
+	if a.projection != nil {
+		projTasks := a.projection.GetTodayTasksOrdered() // Use ordered version
+		currentSession := a.projection.GetCurrentSession()
+
+		for _, task := range projTasks {
+			status := "pending"
+			if task.Status == "done" {
+				status = "done"
+			} else if currentSession != nil && currentSession.TaskGUID == task.GUID {
+				status = "in_progress"
+			}
+
+			tasks = append(tasks, DashboardTask{
+				GUID:   task.GUID,
+				Title:  task.Markdown,
+				Source: "daily",
+				Status: status,
+			})
+		}
+
+		// If we have tasks from projection, use them
+		if len(tasks) > 0 {
+			return tasks, nil
+		}
+	}
+
+	// Fallback: Get tasks from Thymer's daily note directly (READ path via WebSocket)
 	if a.thymer != nil && a.thymer.Available() {
 		journal, err := a.thymer.GetTodayJournal(ctx)
 		if err != nil {
 			slog.Debug("failed to get today's journal", "error", err)
 		} else if journal != nil {
+			currentSession := a.projection.GetCurrentSession()
+
 			// Extract tasks from line items
 			for _, item := range journal.LineItems {
 				if item.Type != "task" {
@@ -538,8 +591,7 @@ func (a *App) getTodayTasks() ([]DashboardTask, error) {
 				status := "pending"
 				if item.Checked {
 					status = "done"
-				} else if dashboardState != nil && dashboardState.Session != nil &&
-					dashboardState.Session.TaskGUID == item.GUID {
+				} else if currentSession != nil && currentSession.TaskGUID == item.GUID {
 					status = "in_progress"
 				}
 
@@ -552,11 +604,6 @@ func (a *App) getTodayTasks() ([]DashboardTask, error) {
 			}
 		}
 	}
-
-	// NOTE: We only show tasks from Thymer's daily note.
-	// When not connected, the dashboard shows an empty task list with
-	// a prompt to connect to Thymer. We don't fall back to showing all
-	// Issues because those aren't "today's planned tasks".
 
 	return tasks, nil
 }
@@ -572,6 +619,28 @@ func (a *App) GetConnectionStatus() map[string]any {
 		"connected": connected,
 		"count":     count,
 	}
+}
+
+// NavigateToRecord sends a navigate message to Thymer to open a record.
+func (a *App) NavigateToRecord(guid string) error {
+	if a.thymer == nil || a.thymer.ConnectionCount() == 0 {
+		return fmt.Errorf("not connected to Thymer")
+	}
+
+	// Send navigate message to Thymer
+	ctx := context.Background()
+	msg := map[string]any{
+		"type":   "navigate",
+		"target": "GUID:" + guid,
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal navigate message: %w", err)
+	}
+
+	slog.Info("navigating to record", "guid", guid)
+	return a.thymer.SendRaw(ctx, data)
 }
 
 // getTodayEvents fetches calendar events for today.

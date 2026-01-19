@@ -1,6 +1,34 @@
 export namespace main {
 	
-	export class DailyStats {
+	export class SessionData {
+	    id?: string;
+	    active: boolean;
+	    paused?: boolean;
+	    taskGuid: string;
+	    taskTitle: string;
+	    taskSource?: string;
+	    elapsed: number;
+	    startedAt?: string;
+	    endedAt?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionData(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.active = source["active"];
+	        this.paused = source["paused"];
+	        this.taskGuid = source["taskGuid"];
+	        this.taskTitle = source["taskTitle"];
+	        this.taskSource = source["taskSource"];
+	        this.elapsed = source["elapsed"];
+	        this.startedAt = source["startedAt"];
+	        this.endedAt = source["endedAt"];
+	    }
+	}
+	export class DashboardStats {
 	    date: string;
 	    planned: number;
 	    completed: number;
@@ -8,7 +36,7 @@ export namespace main {
 	    total_time: number;
 	
 	    static createFrom(source: any = {}) {
-	        return new DailyStats(source);
+	        return new DashboardStats(source);
 	    }
 	
 	    constructor(source: any = {}) {
@@ -18,26 +46,6 @@ export namespace main {
 	        this.completed = source["completed"];
 	        this.queued = source["queued"];
 	        this.total_time = source["total_time"];
-	    }
-	}
-	export class SessionData {
-	    active: boolean;
-	    taskGuid: string;
-	    taskTitle: string;
-	    taskSource?: string;
-	    elapsed: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new SessionData(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.active = source["active"];
-	        this.taskGuid = source["taskGuid"];
-	        this.taskTitle = source["taskTitle"];
-	        this.taskSource = source["taskSource"];
-	        this.elapsed = source["elapsed"];
 	    }
 	}
 	export class HabitData {
@@ -110,8 +118,9 @@ export namespace main {
 	    tasks: DashboardTask[];
 	    events: DashboardEvent[];
 	    habits: HabitData[];
-	    stats: DailyStats;
+	    stats: DashboardStats;
 	    session?: SessionData;
+	    sessions?: SessionData[];
 	
 	    static createFrom(source: any = {}) {
 	        return new DashboardData(source);
@@ -122,8 +131,9 @@ export namespace main {
 	        this.tasks = this.convertValues(source["tasks"], DashboardTask);
 	        this.events = this.convertValues(source["events"], DashboardEvent);
 	        this.habits = this.convertValues(source["habits"], HabitData);
-	        this.stats = this.convertValues(source["stats"], DailyStats);
+	        this.stats = this.convertValues(source["stats"], DashboardStats);
 	        this.session = this.convertValues(source["session"], SessionData);
+	        this.sessions = this.convertValues(source["sessions"], SessionData);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -144,6 +154,7 @@ export namespace main {
 		    return a;
 		}
 	}
+	
 	
 	
 	

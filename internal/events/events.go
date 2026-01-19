@@ -19,19 +19,38 @@ type Event struct {
 	Data      map[string]any `json:"data"`
 }
 
-// Event types for Thymer actions
+// Event types - 12 core events for session tracking and planning
 const (
-	EventTaskStarted   = "task.started"
-	EventTaskPaused    = "task.paused"
-	EventTaskResumed   = "task.resumed"
-	EventTaskCompleted = "task.completed"
-	EventHabitToggled  = "habit.toggled"
-	EventNoteAdded     = "note.added"
+	// ==========================================================================
+	// Line events (from Thymer observations)
+	// ==========================================================================
+	EventLineUpdated = "line.updated" // {guid, markdown, status, updated_at}
+	EventLineRemoved = "line.removed" // {guid}
 
-	// Line item operations (daily note tasks)
-	EventLineItemToggle = "lineitem.toggle"
-	EventLineItemAdd    = "lineitem.add"
-	EventLineItemUpdate = "lineitem.update"
+	// ==========================================================================
+	// Session events (focus timer from thymer-bar UI)
+	// ==========================================================================
+	EventSessionStarted   = "session.started"   // {session_id, task_guid, task_title}
+	EventSessionPaused    = "session.paused"    // {session_id, elapsed_seconds}
+	EventSessionResumed   = "session.resumed"   // {session_id}
+	EventSessionCompleted = "session.completed" // {session_id, task_guid, elapsed_seconds}
+
+	// ==========================================================================
+	// Planning events (thymer-bar UI actions)
+	// ==========================================================================
+	EventTaskReordered   = "task.reordered"   // {guid, after_guid} - drag in queue
+	EventTaskScheduled   = "task.scheduled"   // {guid, time} - drag to timeline
+	EventTaskUnscheduled = "task.unscheduled" // {guid} - remove from timeline
+	EventTaskDuration    = "task.duration"    // {guid, duration} - resize on timeline
+	EventTaskCompleted   = "task.completed"   // {guid} - mark done in thymer-bar
+	EventTaskUncompleted = "task.uncompleted" // {guid} - mark not done in thymer-bar
+
+	// ==========================================================================
+	// Legacy aliases (for migration, will remove later)
+	// ==========================================================================
+	EventDailyTaskFound   = EventLineUpdated
+	EventDailyTaskUpdated = EventLineUpdated
+	EventDailyTaskRemoved = EventLineRemoved
 )
 
 // Publisher publishes events to JetStream.
@@ -69,6 +88,41 @@ func (p *Publisher) Publish(ctx context.Context, eventType string, data map[stri
 	return nil
 }
 
+// DayStreamName returns the stream name for a given date (e.g., "day.20250119").
+func DayStreamName(date time.Time) string {
+	return fmt.Sprintf("day.%s", date.Format("20060102"))
+}
+
+// TodayStreamName returns the stream name for today.
+func TodayStreamName() string {
+	return DayStreamName(time.Now())
+}
+
+// PublishToDay publishes an event to the day-partitioned stream.
+func (p *Publisher) PublishToDay(ctx context.Context, eventType string, data map[string]any) error {
+	event := Event{
+		ID:        fmt.Sprintf("%d", time.Now().UnixNano()),
+		Type:      eventType,
+		Timestamp: time.Now(),
+		Data:      data,
+	}
+
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal event: %w", err)
+	}
+
+	// Publish to today's stream
+	subject := TodayStreamName()
+	_, err = p.js.Publish(ctx, subject, payload)
+	if err != nil {
+		return fmt.Errorf("failed to publish event to day stream: %w", err)
+	}
+
+	slog.Debug("event published to day stream", "type", eventType, "id", event.ID, "stream", subject)
+	return nil
+}
+
 // Consumer consumes events from JetStream.
 type Consumer struct {
 	js       jetstream.JetStream
@@ -78,7 +132,7 @@ type Consumer struct {
 	stopCh   chan struct{}
 }
 
-// NewConsumer creates a new event consumer.
+// NewConsumer creates a new event consumer with a filter subject.
 func NewConsumer(js jetstream.JetStream, stream, consumerName string, handler func(context.Context, *Event) error) (*Consumer, error) {
 	// Create or get the consumer
 	consumer, err := js.CreateOrUpdateConsumer(context.Background(), stream, jetstream.ConsumerConfig{
@@ -90,6 +144,29 @@ func NewConsumer(js jetstream.JetStream, stream, consumerName string, handler fu
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create consumer: %w", err)
+	}
+
+	return &Consumer{
+		js:       js,
+		stream:   stream,
+		consumer: consumer,
+		handler:  handler,
+		stopCh:   make(chan struct{}),
+	}, nil
+}
+
+// NewDayConsumer creates a consumer for the DAYS stream (day.YYYYMMDD subjects).
+func NewDayConsumer(js jetstream.JetStream, stream, consumerName string, handler func(context.Context, *Event) error) (*Consumer, error) {
+	// Create or get the consumer - matches all day.* subjects
+	consumer, err := js.CreateOrUpdateConsumer(context.Background(), stream, jetstream.ConsumerConfig{
+		Name:          consumerName,
+		Durable:       consumerName,
+		FilterSubject: "day.>",
+		AckPolicy:     jetstream.AckExplicitPolicy,
+		DeliverPolicy: jetstream.DeliverNewPolicy, // Only process new events (not replay on restart)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create day consumer: %w", err)
 	}
 
 	return &Consumer{

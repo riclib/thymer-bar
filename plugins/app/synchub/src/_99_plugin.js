@@ -65,13 +65,16 @@ class Plugin extends CollectionPlugin {
       icon: 'clipboard-text',
       onSelected: () => this.pasteMarkdownFromClipboard(),
     });
+
+    // Initialize daily note watcher (SPIKE)
+    DailyNoteWatcher.init(this.ui, this.data);
   }
 
   onUnload() {
-    if (this.ws) {
+    if (this.ws && typeof this.ws.close === 'function') {
       this.ws.close();
-      this.ws = null;
     }
+    this.ws = null;
     if (this.statusBarItem) {
       this.statusBarItem.remove();
     }
@@ -86,6 +89,8 @@ class Plugin extends CollectionPlugin {
       SyncHubPlanner.sidebarItem.remove();
     }
     SyncHubPlanner.hide();
+    // Cleanup daily note watcher (SPIKE)
+    DailyNoteWatcher.cleanup();
     delete window.syncHub;
     delete window.plannerHub;
   }

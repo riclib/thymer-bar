@@ -7,12 +7,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"thymer-bar/internal/bit"
 	"thymer-bar/internal/config"
 	"thymer-bar/internal/events"
 	"thymer-bar/internal/mcp"
 	internalnats "thymer-bar/internal/nats"
+	"thymer-bar/internal/projection"
 	"thymer-bar/internal/secrets"
 	"thymer-bar/internal/sqlite"
 	"thymer-bar/internal/sync"
@@ -52,6 +54,10 @@ type App struct {
 	// Event system (JetStream-backed for resilience)
 	eventPublisher *events.Publisher
 	eventConsumer  *events.Consumer
+	dayConsumer    *events.Consumer
+
+	// Projection state (event-sourced in-memory state)
+	projection *projection.State
 
 	// Configuration
 	dataDir string
@@ -112,6 +118,7 @@ func (a *App) startup(ctx context.Context) {
 	a.initNATS()
 	a.initSQLite()
 	a.initThymer()
+	a.initProjection()
 	a.initSyncEngines()
 	a.initHTTPServer()
 	a.initTray()
@@ -181,17 +188,29 @@ func (a *App) initNATS() {
 	if err != nil {
 		fmt.Printf("Failed to create EVENTS stream: %v\n", err)
 	}
+	// DAYS stream for day-partitioned events (line updates, sessions, etc.)
+	_, err = ns.EnsureStream(ctx, "DAYS", []string{"day.>"})
+	if err != nil {
+		fmt.Printf("Failed to create DAYS stream: %v\n", err)
+	}
 
 	// Initialize event publisher
 	a.eventPublisher = events.NewPublisher(ns.JetStream(), "EVENTS")
 
-	// Initialize event consumer (processes queued events when Thymer is connected)
+	// Initialize event consumer for EVENTS stream (sync events)
 	a.eventConsumer, err = events.NewConsumer(ns.JetStream(), "EVENTS", "thymer-renderer", a.handleEvent)
 	if err != nil {
-		fmt.Printf("Failed to create event consumer: %v\n", err)
+		fmt.Printf("Failed to create EVENTS consumer: %v\n", err)
 	} else {
-		// Start consumer in background
 		go a.eventConsumer.Start(context.Background())
+	}
+
+	// Initialize event consumer for DAYS stream (line updates, sessions)
+	a.dayConsumer, err = events.NewDayConsumer(ns.JetStream(), "DAYS", "day-processor", a.handleEvent)
+	if err != nil {
+		fmt.Printf("Failed to create DAYS consumer: %v\n", err)
+	} else {
+		go a.dayConsumer.Start(context.Background())
 	}
 
 	fmt.Println("NATS initialized")
@@ -207,85 +226,52 @@ func (a *App) handleEvent(ctx context.Context, event *events.Event) error {
 	slog.Info("processing event", "type", event.Type, "id", event.ID)
 
 	switch event.Type {
-	case events.EventTaskCompleted:
-		// Mark task as completed in Thymer
-		taskGUID, _ := event.Data["task_guid"].(string)
-		elapsed, _ := event.Data["elapsed"].(float64)
-		completed, _ := event.Data["completed"].(string)
-
-		if taskGUID == "" {
-			return nil // Skip if no task GUID
-		}
-
-		// Update the task in Thymer via WebSocket
-		err := a.thymer.UpdateRecord(ctx, taskGUID, map[string]any{
-			"status":       "Done",
-			"completed_at": completed,
-			"time_spent":   int(elapsed),
-		})
-		if err != nil {
-			return fmt.Errorf("failed to update task in Thymer: %w", err)
-		}
-		slog.Info("task marked complete in Thymer", "guid", taskGUID)
-
-	case events.EventTaskStarted:
+	// Session events - update Thymer task status
+	case events.EventSessionStarted:
 		taskGUID, _ := event.Data["task_guid"].(string)
 		if taskGUID != "" {
+			// Mark task as "Doing" in Thymer
 			a.thymer.UpdateRecord(ctx, taskGUID, map[string]any{
-				"status": "In Progress",
+				"status": "Doing",
 			})
+			slog.Info("task marked as Doing in Thymer", "guid", taskGUID)
 		}
 
-	case events.EventTaskPaused, events.EventTaskResumed:
-		// Could log timestamps to daily note
-		slog.Debug("task state changed", "type", event.Type)
-
-	case events.EventLineItemToggle:
-		// Toggle a line item's checked state in Thymer
-		recordGUID, _ := event.Data["record_guid"].(string)
-		lineItemGUID, _ := event.Data["lineitem_guid"].(string)
-		checked, _ := event.Data["checked"].(bool)
-
-		if recordGUID == "" || lineItemGUID == "" {
-			return nil
+	case events.EventSessionResumed:
+		// Same as started - task goes back to "Doing"
+		if a.projection != nil && a.projection.GetCurrentSession() != nil {
+			taskGUID := a.projection.GetCurrentSession().TaskGUID
+			if taskGUID != "" {
+				a.thymer.UpdateRecord(ctx, taskGUID, map[string]any{
+					"status": "Doing",
+				})
+			}
 		}
 
-		err := a.thymer.UpdateLineItem(ctx, recordGUID, lineItemGUID, map[string]any{
-			"checked": checked,
+	case events.EventSessionPaused:
+		// Task stays "Doing" (paused != done)
+		slog.Debug("session paused, task status unchanged")
+
+	case events.EventSessionCompleted:
+		taskGUID, _ := event.Data["task_guid"].(string)
+		elapsed, _ := event.Data["elapsed_seconds"].(float64)
+		if taskGUID != "" {
+			// Mark task as "Done" in Thymer
+			a.thymer.UpdateRecord(ctx, taskGUID, map[string]any{
+				"status":     "Done",
+				"time_spent": int(elapsed),
+			})
+			slog.Info("task marked as Done in Thymer", "guid", taskGUID, "elapsed", int(elapsed))
+		}
+
+	// Line events - just log them (state is managed by projection)
+	case events.EventLineUpdated, events.EventLineRemoved:
+		slog.Debug("line event", "type", event.Type)
+		// Emit to frontend to refresh dashboard
+		runtime.EventsEmit(a.ctx, "dailynote:changed", map[string]any{
+			"type": event.Type,
+			"guid": event.Data["guid"],
 		})
-		if err != nil {
-			return fmt.Errorf("failed to toggle line item: %w", err)
-		}
-		slog.Info("line item toggled", "lineitem", lineItemGUID, "checked", checked)
-
-	case events.EventLineItemAdd:
-		// Add a new line item to a record
-		recordGUID, _ := event.Data["record_guid"].(string)
-		itemType, _ := event.Data["type"].(string)
-		text, _ := event.Data["text"].(string)
-		refGUID, _ := event.Data["ref_guid"].(string)
-
-		if recordGUID == "" {
-			return nil
-		}
-		if itemType == "" {
-			itemType = "task"
-		}
-
-		// Build segments
-		segments := []map[string]any{}
-		if text != "" {
-			segments = append(segments, map[string]any{"type": "text", "text": text})
-		}
-		if refGUID != "" {
-			segments = append(segments, map[string]any{"type": "ref", "text": map[string]string{"guid": refGUID}})
-		}
-
-		_, err := a.thymer.AddLineItem(ctx, recordGUID, itemType, segments)
-		if err != nil {
-			return fmt.Errorf("failed to add line item: %w", err)
-		}
-		slog.Info("line item added", "record", recordGUID, "type", itemType)
 	}
 
 	return nil
@@ -315,6 +301,55 @@ func (a *App) initThymer() {
 	}
 
 	fmt.Println("Thymer client initialized (waiting for connections)")
+}
+
+func (a *App) initProjection() {
+	// Initialize projection state (event-sourced in-memory state)
+	a.projection = projection.NewState(a.db, a.eventPublisher)
+
+	// Initialize from database
+	ctx := context.Background()
+	if err := a.projection.Initialize(ctx); err != nil {
+		fmt.Printf("Failed to initialize projection: %v\n", err)
+	}
+
+	// Set up snapshot-based daily note sync from Thymer (preferred)
+	// Thymer sends full snapshots, we compare with projection and publish events for changes
+	a.thymer.OnDailyNoteSnapshot = func(snapshot *thymer.DailyNoteSnapshot) {
+		// Convert thymer types to projection types
+		lines := make([]projection.LineObserved, len(snapshot.Lines))
+		for i, line := range snapshot.Lines {
+			// Parse the timestamp
+			updatedAt, err := time.Parse(time.RFC3339, line.UpdatedAt)
+			if err != nil {
+				updatedAt = time.Now() // Fallback to now if parse fails
+			}
+
+			lines[i] = projection.LineObserved{
+				GUID:      line.GUID,
+				Markdown:  line.Markdown,
+				Status:    line.Status,
+				UpdatedAt: updatedAt,
+			}
+		}
+
+		// Parse observed timestamp
+		observedAt, err := time.Parse(time.RFC3339, snapshot.ObservedAt)
+		if err != nil {
+			observedAt = time.Now()
+		}
+
+		// Apply snapshot to projection (compares timestamps, publishes events for changes)
+		// Events flow: ApplyLineSnapshot → JetStream → handleEvent → UI emit
+		projSnapshot := &projection.LineSnapshot{
+			Date:       snapshot.Date,
+			ObservedAt: observedAt,
+			Lines:      lines,
+		}
+		a.projection.ApplyLineSnapshot(context.Background(), projSnapshot)
+	}
+
+	fmt.Println("Projection state initialized (snapshot-based daily note sync)")
 }
 
 func (a *App) initSyncEngines() {

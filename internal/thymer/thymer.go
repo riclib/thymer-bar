@@ -12,6 +12,30 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// DailyNoteSnapshot represents a full snapshot of today's daily note lines.
+// This is the proper event sourcing format - observer sends observations,
+// thymer-bar compares with projection and publishes events for changes.
+type DailyNoteSnapshot struct {
+	Date       string             `json:"date"`       // YYYY-MM-DD
+	ObservedAt string             `json:"observedAt"` // ISO timestamp
+	Lines      []DailyNoteLineObs `json:"lines"`      // All current lines in order
+}
+
+// DailyNoteLineObs represents an observed line from Thymer.
+type DailyNoteLineObs struct {
+	GUID      string    `json:"guid"`
+	Markdown  string    `json:"markdown"`
+	Refs      []TaskRef `json:"refs,omitempty"`
+	Status    string    `json:"status"`
+	UpdatedAt string    `json:"updatedAt"` // Thymer's timestamp for this line
+}
+
+// TaskRef represents a reference link in a task.
+type TaskRef struct {
+	GUID  string `json:"guid"`
+	Title string `json:"title"`
+}
+
 // Client manages WebSocket connections to Thymer instances.
 type Client struct {
 	mu          sync.RWMutex
@@ -20,6 +44,9 @@ type Client struct {
 
 	// Callback when connection count changes
 	OnConnectionChange func(count int)
+
+	// Callback when daily note snapshot is pushed from Thymer
+	OnDailyNoteSnapshot func(snapshot *DailyNoteSnapshot)
 }
 
 type connection struct {
@@ -571,4 +598,25 @@ func (c *Client) SendToOne(msg any) {
 	conn.mu.Lock()
 	conn.ws.WriteMessage(websocket.TextMessage, data)
 	conn.mu.Unlock()
+}
+
+// SendRaw sends raw JSON bytes to the first available Thymer connection (fire-and-forget).
+// Returns an error if no connections are available.
+func (c *Client) SendRaw(ctx context.Context, data []byte) error {
+	c.mu.RLock()
+	var conn *connection
+	if len(c.connections) > 0 {
+		conn = c.connections[0]
+	}
+	c.mu.RUnlock()
+
+	if conn == nil {
+		return fmt.Errorf("no Thymer connections available")
+	}
+
+	conn.mu.Lock()
+	err := conn.ws.WriteMessage(websocket.TextMessage, data)
+	conn.mu.Unlock()
+
+	return err
 }

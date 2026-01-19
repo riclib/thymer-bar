@@ -1943,6 +1943,87 @@ body:has(.dashboard) {
 
 .db-timeline-body::-webkit-scrollbar { width: 0; }
 
+/* New Timeline Grid (overlay-based positioning) */
+.db-timeline-grid {
+    position: relative;
+    height: 100%;
+    min-height: 900px; /* 15 hours * 60px/hour */
+}
+
+.db-hour-marker {
+    display: grid;
+    grid-template-columns: 52px 1fr;
+    height: 60px; /* Each hour = 60px = 6.67% of 900px timeline */
+    position: relative;
+}
+
+.db-hour-marker .db-hour-num {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-align: right;
+    padding: 0 14px 0 0;
+    font-weight: 500;
+    line-height: 60px;
+}
+
+.db-hour-marker.now .db-hour-num {
+    color: var(--ember);
+}
+
+.db-hour-marker.past .db-hour-num {
+    opacity: 0.5;
+}
+
+.db-hour-line {
+    border-top: 1px solid var(--border);
+    margin-left: 0;
+    position: relative;
+}
+
+.db-hour-marker.now .db-hour-line::before {
+    content: '';
+    position: absolute;
+    left: -4px;
+    top: -4px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--ember);
+    box-shadow: 0 0 14px var(--ember-glow), 0 0 4px var(--ember);
+}
+
+/* Now line - horizontal indicator at current time */
+.db-now-line {
+    position: absolute;
+    left: 52px;
+    right: 16px;
+    height: 2px;
+    background: var(--ember);
+    box-shadow: 0 0 8px var(--ember-glow);
+    z-index: 10;
+    pointer-events: none;
+}
+
+/* Blocks layer - absolute positioned overlay */
+.db-blocks-layer {
+    position: absolute;
+    top: 0;
+    left: 66px; /* 52px label + 14px padding */
+    right: 16px;
+    bottom: 0;
+    pointer-events: none;
+}
+
+.db-blocks-layer .db-block {
+    position: absolute;
+    left: 0;
+    right: 0;
+    pointer-events: auto;
+    min-height: 40px;
+    box-sizing: border-box;
+}
+
+/* Legacy hour-row structure (keeping for compatibility) */
 .db-hour-row {
     display: grid;
     grid-template-columns: 52px 1fr;
@@ -2006,6 +2087,19 @@ body:has(.dashboard) {
 .db-block.cal {
     background: var(--steel-soft);
     border-left: 3px solid var(--steel);
+}
+
+.db-block.session {
+    background: var(--sage-soft, rgba(139, 176, 145, 0.1));
+    border-left: 3px solid var(--sage);
+}
+
+.db-block.session.completed {
+    opacity: 0.85;
+}
+
+.db-block.session .db-block-dot {
+    background: var(--sage);
 }
 
 .db-block-dot {
@@ -2391,6 +2485,15 @@ body:has(.dashboard) {
     text-decoration: none;
 }
 .thymer-link:hover {
+    text-decoration: underline;
+}
+
+/* Clickable refs [title](thymer:uuid) - display in Thymer teal */
+.thymer-ref {
+    color: color(display-p3 0.396 0.784 0.733);
+    cursor: pointer;
+}
+.thymer-ref:hover {
     text-decoration: underline;
 }
 

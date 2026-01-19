@@ -71,6 +71,12 @@ func New(cfg Config) (*DB, error) {
 		return nil, fmt.Errorf("failed to migrate bits schema: %w", err)
 	}
 
+	// Run Sessions schema migration
+	if err := d.migrateSessions(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to migrate sessions schema: %w", err)
+	}
+
 	return d, nil
 }
 

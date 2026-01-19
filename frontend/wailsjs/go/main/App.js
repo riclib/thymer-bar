@@ -74,6 +74,10 @@ export function GetPlugins() {
   return window['go']['main']['App']['GetPlugins']();
 }
 
+export function GetSessionHistory(arg1) {
+  return window['go']['main']['App']['GetSessionHistory'](arg1);
+}
+
 export function GetStatus() {
   return window['go']['main']['App']['GetStatus']();
 }
@@ -116,6 +120,10 @@ export function HideWindow() {
 
 export function InstallPlugin(arg1) {
   return window['go']['main']['App']['InstallPlugin'](arg1);
+}
+
+export function NavigateToRecord(arg1) {
+  return window['go']['main']['App']['NavigateToRecord'](arg1);
 }
 
 export function PauseSession() {

@@ -40,7 +40,8 @@ import {
     StartSession,
     PauseSession,
     CompleteSession,
-    ToggleHabit
+    ToggleHabit,
+    NavigateToRecord
 } from '../wailsjs/go/main/App';
 
 import { EventsOn } from '../wailsjs/runtime/runtime';
@@ -97,6 +98,13 @@ EventsOn('navigate', async (target) => {
     } else if (target === 'dashboard' && currentView !== 'dashboard') {
         currentView = 'dashboard';
         await init();
+    }
+});
+
+EventsOn('dailynote:changed', async (data) => {
+    console.log('[thymer-bar] Daily note changed:', data);
+    if (currentView === 'dashboard') {
+        await renderDashboard();
     }
 });
 
@@ -363,6 +371,9 @@ function bindEvents() {
             case 'toggle-habit':
                 await handleToggleHabit(target.dataset.habit);
                 break;
+            case 'navigate-ref':
+                await handleNavigateRef(target.dataset.guid);
+                break;
 
             // Plugin Manager (from settings)
             case 'select-plugin':
@@ -520,6 +531,16 @@ async function handleToggleHabit(habitId) {
         }
     } catch (err) {
         showToast(`Failed: ${err}`, 'error');
+    }
+}
+
+async function handleNavigateRef(guid) {
+    if (!guid) return;
+    try {
+        await NavigateToRecord(guid);
+    } catch (err) {
+        console.error('Failed to navigate:', err);
+        showToast('Could not open in Thymer', 'error');
     }
 }
 

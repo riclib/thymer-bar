@@ -1,6 +1,7 @@
 package thymer
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -54,6 +55,22 @@ func (c *Client) HandleIncoming(connID string, msgType string, data []byte) ([]b
 	case "plugins":
 		// Client pushing available plugins
 		fmt.Printf("[Thymer] Client %s pushed plugins\n", connID)
+		return []byte(`{"type":"ack","status":"ok"}`), nil
+
+	case "dailynote.snapshot":
+		// Full daily note snapshot pushed from Thymer
+		var snapshot DailyNoteSnapshot
+		if err := json.Unmarshal(data, &snapshot); err != nil {
+			return nil, fmt.Errorf("failed to parse dailynote.snapshot: %w", err)
+		}
+
+		fmt.Printf("[Thymer] Daily note snapshot: %d lines\n", len(snapshot.Lines))
+
+		// Call the callback if registered
+		if c.OnDailyNoteSnapshot != nil {
+			c.OnDailyNoteSnapshot(&snapshot)
+		}
+
 		return []byte(`{"type":"ack","status":"ok"}`), nil
 
 	default:

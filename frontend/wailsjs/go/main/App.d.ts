@@ -39,6 +39,8 @@ export function GetPluginManagerHTML():Promise<string>;
 
 export function GetPlugins():Promise<Array<ui.PluginInfo>>;
 
+export function GetSessionHistory(arg1:string):Promise<Array<main.SessionData>>;
+
 export function GetStatus():Promise<Record<string, any>>;
 
 export function GetSyncDefaultInfoHTML():Promise<string>;
@@ -60,6 +62,8 @@ export function HasGoogleCredentials():Promise<boolean>;
 export function HideWindow():Promise<void>;
 
 export function InstallPlugin(arg1:string):Promise<void>;
+
+export function NavigateToRecord(arg1:string):Promise<void>;
 
 export function PauseSession():Promise<void>;
 

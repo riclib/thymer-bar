@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"html"
 	"regexp"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -14,8 +16,19 @@ type DashboardData struct {
 	Habits    []Habit
 	Stats     Stats
 	Session   *Session
+	Sessions  []CompletedSession // Completed sessions for timeline
 	Connected bool
 	Date      string // "Thu, Jan 16"
+}
+
+// CompletedSession represents a completed work session for the timeline
+type CompletedSession struct {
+	ID        string
+	TaskGUID  string
+	TaskTitle string
+	StartedAt string // RFC3339 time
+	EndedAt   string // RFC3339 time
+	Elapsed   int    // seconds
 }
 
 // Task represents a task item
@@ -74,7 +87,7 @@ templ Dashboard(data DashboardData) {
 			</div>
 			<div class="db-timeline-wrap">
 				<div class="db-timeline-body">
-					@Timeline(data.Tasks, data.Events)
+					@Timeline(data.Tasks, data.Events, data.Sessions)
 				</div>
 			</div>
 		</div>
@@ -119,16 +132,73 @@ templ Dashboard(data DashboardData) {
 	</div>
 }
 
-// Timeline renders the hour grid with tasks and events
-templ Timeline(tasks []Task, events []Event) {
-	for hour := 6; hour <= 21; hour++ {
-		<div class={ "db-hour-row", templ.KV("now", isNow(hour)), templ.KV("past", isPast(hour)) }>
-			<div class="db-hour-num">{ formatHour(hour) }</div>
-			<div class="db-hour-track">
-				@BlocksAtHour(tasks, events, hour)
+// Timeline renders the hour grid with tasks, events, and completed sessions as overlays
+templ Timeline(tasks []Task, events []Event, sessions []CompletedSession) {
+	<div class="db-timeline-grid">
+		<!-- Hour markers (background grid) -->
+		for hour := 6; hour <= 21; hour++ {
+			<div class={ "db-hour-marker", templ.KV("now", isNow(hour)), templ.KV("past", isPast(hour)) }>
+				<div class="db-hour-num">{ formatHour(hour) }</div>
+				<div class="db-hour-line"></div>
 			</div>
+		}
+		<!-- Now indicator -->
+		<div class="db-now-line" style={ fmt.Sprintf("top: %s", nowLinePosition()) }></div>
+		<!-- Event/Task/Session blocks (overlays) -->
+		<div class="db-blocks-layer">
+			for _, event := range events {
+				<div
+					class={ "db-block", "cal", templ.KV("past", isTimePast(event.Time)) }
+					style={ blockStyle(event.Time, event.Duration) }
+				>
+					<div class="db-block-text">
+						<div class="db-block-title">{ event.Title }</div>
+						if event.Location != "" {
+							<div class="db-block-sub">{ event.Location }</div>
+						}
+					</div>
+					if event.Duration != "" {
+						<div class="db-block-dur">{ event.Duration }</div>
+					}
+				</div>
+			}
+			for _, task := range tasks {
+				if task.Time != "" {
+					<div
+						class={ "db-block", "task", templ.KV("current", task.Status == "in_progress"), templ.KV("past", isTimePast(task.Time)) }
+						style={ blockStyle(task.Time, task.Estimate) }
+						data-guid={ task.GUID }
+					>
+						<div class="db-block-dot"></div>
+						<div class="db-block-text">
+							<div class="db-block-title">@templ.Raw(renderMarkdownTitle(task.Title))</div>
+							if task.Source != "" {
+								<div class="db-block-sub">{ task.Source }</div>
+							}
+						</div>
+						if task.Estimate != "" {
+							<div class="db-block-dur">{ task.Estimate }</div>
+						}
+					</div>
+				}
+			}
+			<!-- Completed session blocks (actual work done) -->
+			for _, session := range sessions {
+				<div
+					class="db-block session completed"
+					style={ sessionBlockStyle(session.StartedAt, session.Elapsed) }
+					data-session-id={ session.ID }
+				>
+					<div class="db-block-dot"></div>
+					<div class="db-block-text">
+						<div class="db-block-title">@templ.Raw(renderMarkdownTitle(session.TaskTitle))</div>
+						<div class="db-block-sub">completed</div>
+					</div>
+					<div class="db-block-dur">{ formatDuration(session.Elapsed) }</div>
+				</div>
+			}
 		</div>
-	}
+	</div>
 }
 
 // BlocksAtHour renders task blocks and calendar events at a specific hour
@@ -389,23 +459,200 @@ func eventAtHour(event Event, hour int) bool {
 	return t.Hour() == hour
 }
 
+// Timeline constants: 6am to 9pm = 15 hours
+const timelineStartHour = 6
+const timelineEndHour = 21
+const timelineTotalMinutes = (timelineEndHour - timelineStartHour) * 60 // 900 minutes
+
+// nowLinePosition returns CSS top position for current time indicator
+func nowLinePosition() string {
+	now := time.Now()
+	hour := now.Hour()
+	minute := now.Minute()
+
+	// If outside timeline range, hide it
+	if hour < timelineStartHour || hour >= timelineEndHour {
+		return "-100px"
+	}
+
+	minutesFromStart := (hour-timelineStartHour)*60 + minute
+	percent := float64(minutesFromStart) / float64(timelineTotalMinutes) * 100
+	return fmt.Sprintf("%.2f%%", percent)
+}
+
+// blockStyle returns CSS style for positioning a block by time and duration
+func blockStyle(startTime, duration string) string {
+	top := timeToPercent(startTime)
+	height := durationToPercent(duration)
+	return fmt.Sprintf("top: %.2f%%; height: %.2f%%;", top, height)
+}
+
+// timeToPercent converts a time string to a percentage position in the timeline
+func timeToPercent(timeStr string) float64 {
+	// Try parsing various formats
+	var t time.Time
+	var err error
+
+	formats := []string{"3:04 PM", "3:04PM", "3PM", "3pm", "15:04", "3:04"}
+	for _, format := range formats {
+		t, err = time.Parse(format, timeStr)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		return 0
+	}
+
+	hour := t.Hour()
+	minute := t.Minute()
+
+	// Clamp to timeline range
+	if hour < timelineStartHour {
+		return 0
+	}
+	if hour >= timelineEndHour {
+		return 100
+	}
+
+	minutesFromStart := (hour-timelineStartHour)*60 + minute
+	return float64(minutesFromStart) / float64(timelineTotalMinutes) * 100
+}
+
+// durationToPercent converts a duration string to a percentage height
+func durationToPercent(durationStr string) float64 {
+	minutes := parseDurationMinutes(durationStr)
+	if minutes == 0 {
+		minutes = 60 // default to 1 hour if not specified
+	}
+	return float64(minutes) / float64(timelineTotalMinutes) * 100
+}
+
+// parseDurationMinutes parses duration strings like "2h", "30m", "1h30m", "90m"
+func parseDurationMinutes(s string) int {
+	if s == "" {
+		return 0
+	}
+
+	s = strings.ToLower(strings.TrimSpace(s))
+	total := 0
+
+	// Try to parse as Go duration first
+	if d, err := time.ParseDuration(s); err == nil {
+		return int(d.Minutes())
+	}
+
+	// Parse manually: look for hours and minutes
+	// Handles: "2h", "30m", "1h30m", "1.5h"
+	numStr := ""
+	for _, c := range s {
+		if c >= '0' && c <= '9' || c == '.' {
+			numStr += string(c)
+		} else if c == 'h' {
+			if num, err := strconv.ParseFloat(numStr, 64); err == nil {
+				total += int(num * 60)
+			}
+			numStr = ""
+		} else if c == 'm' {
+			if num, err := strconv.ParseFloat(numStr, 64); err == nil {
+				total += int(num)
+			}
+			numStr = ""
+		}
+	}
+
+	return total
+}
+
+// isTimePast checks if a time string represents a time before now
+func isTimePast(timeStr string) bool {
+	var t time.Time
+	var err error
+
+	formats := []string{"3:04 PM", "3:04PM", "3PM", "3pm", "15:04"}
+	for _, format := range formats {
+		t, err = time.Parse(format, timeStr)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		return false
+	}
+
+	now := time.Now()
+	// Compare just the time portion
+	eventMinutes := t.Hour()*60 + t.Minute()
+	nowMinutes := now.Hour()*60 + now.Minute()
+	return eventMinutes < nowMinutes
+}
+
 // renderMarkdownTitle converts markdown links to HTML with thymer: links styled
-var markdownLinkRe = regexp.MustCompile(`\[([^\]]+)\]\((thymer:[^)]+)\)`)
+// thymerLinkRe matches [title](thymer:GUID) markdown links
+var thymerLinkRe = regexp.MustCompile(`\[([^\]]+)\]\(thymer:([^)]+)\)`)
 
 func renderMarkdownTitle(title string) string {
 	// Escape HTML first
 	escaped := html.EscapeString(title)
 
-	// Replace markdown links with HTML links
-	result := markdownLinkRe.ReplaceAllStringFunc(escaped, func(match string) string {
-		parts := markdownLinkRe.FindStringSubmatch(match)
+	// Replace [text](thymer:GUID) with clickable refs that navigate to Thymer
+	result := thymerLinkRe.ReplaceAllStringFunc(escaped, func(match string) string {
+		parts := thymerLinkRe.FindStringSubmatch(match)
 		if len(parts) != 3 {
 			return match
 		}
 		linkText := parts[1]
-		linkHref := parts[2]
-		return fmt.Sprintf(`<a href="%s" class="thymer-link">%s</a>`, linkHref, linkText)
+		guid := parts[2]
+		// Clickable ref styled in Thymer teal
+		return fmt.Sprintf(`<span class="thymer-ref" data-action="navigate-ref" data-guid="%s">%s</span>`, guid, linkText)
 	})
 
 	return result
+}
+
+// sessionBlockStyle returns CSS style for positioning a completed session block
+func sessionBlockStyle(startedAt string, elapsedSeconds int) string {
+	// Parse RFC3339 start time
+	t, err := time.Parse(time.RFC3339, startedAt)
+	if err != nil {
+		return ""
+	}
+
+	// Convert to local time
+	local := t.Local()
+	hour := local.Hour()
+	minute := local.Minute()
+
+	// Calculate position
+	if hour < timelineStartHour || hour >= timelineEndHour {
+		return "display: none;" // Outside visible range
+	}
+
+	minutesFromStart := (hour-timelineStartHour)*60 + minute
+	top := float64(minutesFromStart) / float64(timelineTotalMinutes) * 100
+
+	// Calculate height based on elapsed time
+	height := float64(elapsedSeconds) / 60 / float64(timelineTotalMinutes) * 100
+	if height < 2 {
+		height = 2 // Minimum height for visibility
+	}
+
+	return fmt.Sprintf("top: %.2f%%; height: %.2f%%;", top, height)
+}
+
+// formatDuration formats seconds into a human-readable duration string
+func formatDuration(seconds int) string {
+	if seconds < 60 {
+		return fmt.Sprintf("%ds", seconds)
+	}
+	minutes := seconds / 60
+	if minutes < 60 {
+		return fmt.Sprintf("%dm", minutes)
+	}
+	hours := minutes / 60
+	remainingMinutes := minutes % 60
+	if remainingMinutes == 0 {
+		return fmt.Sprintf("%dh", hours)
+	}
+	return fmt.Sprintf("%dh%dm", hours, remainingMinutes)
 }
