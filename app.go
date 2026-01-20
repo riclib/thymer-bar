@@ -225,19 +225,39 @@ func (a *App) handleEvent(ctx context.Context, event *events.Event) error {
 
 	slog.Info("processing event", "type", event.Type, "id", event.ID)
 
-	// Helper to update task status in Thymer
+	// Helper to update task status in Thymer with optimistic local update
 	updateTaskStatus := func(taskGUID string, status thymer.TaskStatus) {
+		// Map TaskStatus to projection status string
+		statusMap := map[thymer.TaskStatus]string{
+			thymer.TaskStatusInProgress: "in-progress",
+			thymer.TaskStatusBlocked:    "blocked",
+			thymer.TaskStatusDone:       "done",
+		}
+		statusStr := statusMap[status]
+
+		// Optimistic update: apply locally immediately for instant UI feedback
+		if a.projection != nil && statusStr != "" {
+			a.projection.SetTaskStatus(taskGUID, statusStr)
+			// Emit to frontend to refresh dashboard immediately
+			runtime.EventsEmit(a.ctx, "dailynote:changed", map[string]any{
+				"type":   "status.updated",
+				"guid":   taskGUID,
+				"status": statusStr,
+			})
+		}
+
+		// Send to Thymer (async confirmation)
 		journalGUID := ""
 		if a.projection != nil {
 			journalGUID = a.projection.GetJournalGUID()
 		}
 		if journalGUID == "" {
-			slog.Warn("cannot update task status: no journal GUID", "task", taskGUID)
+			slog.Warn("cannot update task status in Thymer: no journal GUID", "task", taskGUID)
 			return
 		}
 		err := a.thymer.UpdateLineItemStatus(ctx, journalGUID, taskGUID, status)
 		if err != nil {
-			slog.Error("failed to update task status", "task", taskGUID, "status", status, "error", err)
+			slog.Error("failed to update task status in Thymer", "task", taskGUID, "status", status, "error", err)
 		} else {
 			slog.Info("task status updated in Thymer", "task", taskGUID, "status", status)
 		}

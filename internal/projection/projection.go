@@ -431,6 +431,18 @@ func (s *State) GetJournalGUID() string {
 	return s.JournalGUID
 }
 
+// SetTaskStatus updates a task's status optimistically (before Thymer confirms).
+// This provides immediate UI feedback when completing tasks.
+func (s *State) SetTaskStatus(taskGUID, status string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if task, exists := s.Tasks[taskGUID]; exists {
+		task.Status = status
+		task.UpdatedAt = time.Now()
+	}
+}
+
 // GetTasksOrdered returns all tasks in queue order.
 // Merges tasks from Thymer push with tasks from session history for resilience.
 func (s *State) GetTasksOrdered() []*Task {
