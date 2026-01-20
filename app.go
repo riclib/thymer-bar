@@ -225,43 +225,56 @@ func (a *App) handleEvent(ctx context.Context, event *events.Event) error {
 
 	slog.Info("processing event", "type", event.Type, "id", event.ID)
 
+	// Helper to update task status in Thymer
+	updateTaskStatus := func(taskGUID string, status thymer.TaskStatus) {
+		journalGUID := ""
+		if a.projection != nil {
+			journalGUID = a.projection.GetJournalGUID()
+		}
+		if journalGUID == "" {
+			slog.Warn("cannot update task status: no journal GUID", "task", taskGUID)
+			return
+		}
+		err := a.thymer.UpdateLineItemStatus(ctx, journalGUID, taskGUID, status)
+		if err != nil {
+			slog.Error("failed to update task status", "task", taskGUID, "status", status, "error", err)
+		} else {
+			slog.Info("task status updated in Thymer", "task", taskGUID, "status", status)
+		}
+	}
+
 	switch event.Type {
 	// Session events - update Thymer task status
 	case events.EventSessionStarted:
 		taskGUID, _ := event.Data["task_guid"].(string)
 		if taskGUID != "" {
-			// Mark task as "Doing" in Thymer
-			a.thymer.UpdateRecord(ctx, taskGUID, map[string]any{
-				"status": "Doing",
-			})
-			slog.Info("task marked as Doing in Thymer", "guid", taskGUID)
+			// Mark task as "In Progress" in Thymer
+			updateTaskStatus(taskGUID, thymer.TaskStatusInProgress)
 		}
 
 	case events.EventSessionResumed:
-		// Same as started - task goes back to "Doing"
+		// Same as started - task goes back to "In Progress"
 		if a.projection != nil && a.projection.GetCurrentSession() != nil {
 			taskGUID := a.projection.GetCurrentSession().TaskGUID
 			if taskGUID != "" {
-				a.thymer.UpdateRecord(ctx, taskGUID, map[string]any{
-					"status": "Doing",
-				})
+				updateTaskStatus(taskGUID, thymer.TaskStatusInProgress)
 			}
 		}
 
 	case events.EventSessionPaused:
-		// Task stays "Doing" (paused != done)
-		slog.Debug("session paused, task status unchanged")
+		// Mark task as "Blocked/Waiting" in Thymer
+		if a.projection != nil && a.projection.GetCurrentSession() != nil {
+			taskGUID := a.projection.GetCurrentSession().TaskGUID
+			if taskGUID != "" {
+				updateTaskStatus(taskGUID, thymer.TaskStatusBlocked)
+			}
+		}
 
 	case events.EventSessionCompleted:
 		taskGUID, _ := event.Data["task_guid"].(string)
-		elapsed, _ := event.Data["elapsed_seconds"].(float64)
 		if taskGUID != "" {
 			// Mark task as "Done" in Thymer
-			a.thymer.UpdateRecord(ctx, taskGUID, map[string]any{
-				"status":     "Done",
-				"time_spent": int(elapsed),
-			})
-			slog.Info("task marked as Done in Thymer", "guid", taskGUID, "elapsed", int(elapsed))
+			updateTaskStatus(taskGUID, thymer.TaskStatusDone)
 		}
 
 	// Line events - just log them (state is managed by projection)
@@ -355,9 +368,10 @@ func (a *App) initProjection() {
 		// Apply snapshot to projection (compares timestamps, publishes events for changes)
 		// Events flow: ApplyLineSnapshot → JetStream → handleEvent → UI emit
 		projSnapshot := &projection.LineSnapshot{
-			Date:       snapshot.Date,
-			ObservedAt: observedAt,
-			Lines:      lines,
+			Date:        snapshot.Date,
+			JournalGUID: snapshot.JournalGUID, // Pass journal GUID for status updates
+			ObservedAt:  observedAt,
+			Lines:       lines,
 		}
 		a.projection.ApplyLineSnapshot(context.Background(), projSnapshot)
 	}

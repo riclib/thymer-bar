@@ -34,11 +34,14 @@ type State struct {
 	// Stats (derived)
 	TodayStats *DailyStats
 
+	// Thymer context (for writing back status updates)
+	JournalGUID string // Today's daily note GUID
+
 	// Internal
-	currentDate string
+	currentDate  string
 	colorCounter int // for assigning rotating colors to tasks
-	db          *sqlite.DB
-	publisher   *events.Publisher
+	db           *sqlite.DB
+	publisher    *events.Publisher
 }
 
 // Task represents a task from Thymer's daily note, enriched with planning data.
@@ -419,6 +422,13 @@ func (s *State) GetTodayStats() *DailyStats {
 	}
 	stats := *s.TodayStats
 	return &stats
+}
+
+// GetJournalGUID returns the GUID of today's daily note (for status updates).
+func (s *State) GetJournalGUID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.JournalGUID
 }
 
 // GetTasksOrdered returns all tasks in queue order.
@@ -998,9 +1008,10 @@ func (s *State) Apply(event *events.Event) {
 
 // LineSnapshot represents a snapshot of lines from Thymer.
 type LineSnapshot struct {
-	Date       string         `json:"date"`
-	ObservedAt time.Time      `json:"observed_at"`
-	Lines      []LineObserved `json:"lines"`
+	Date        string         `json:"date"`
+	JournalGUID string         `json:"journal_guid"` // Thymer record GUID for the daily note
+	ObservedAt  time.Time      `json:"observed_at"`
+	Lines       []LineObserved `json:"lines"`
 }
 
 // LineObserved represents a single line observed from Thymer.
@@ -1017,6 +1028,11 @@ func (s *State) ApplyLineSnapshot(ctx context.Context, snapshot *LineSnapshot) {
 	s.CheckDayChange()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Store the journal GUID (needed for status updates back to Thymer)
+	if snapshot.JournalGUID != "" {
+		s.JournalGUID = snapshot.JournalGUID
+	}
 
 	// Build set of GUIDs in snapshot
 	snapshotGUIDs := make(map[string]bool)

@@ -16,9 +16,10 @@ import (
 // This is the proper event sourcing format - observer sends observations,
 // thymer-bar compares with projection and publishes events for changes.
 type DailyNoteSnapshot struct {
-	Date       string             `json:"date"`       // YYYY-MM-DD
-	ObservedAt string             `json:"observedAt"` // ISO timestamp
-	Lines      []DailyNoteLineObs `json:"lines"`      // All current lines in order
+	Date        string             `json:"date"`                  // YYYY-MM-DD
+	JournalGUID string             `json:"journalGuid,omitempty"` // Journal record GUID (needed for status updates)
+	ObservedAt  string             `json:"observedAt"`            // ISO timestamp
+	Lines       []DailyNoteLineObs `json:"lines"`                 // All current lines in order
 }
 
 // DailyNoteLineObs represents an observed line from Thymer.
@@ -301,6 +302,34 @@ func (c *Client) UpdateRecord(ctx context.Context, guid string, fields map[strin
 	_, err := c.send(ctx, &Message{
 		Type:   "request",
 		Action: "updateRecord",
+		Data:   data,
+	})
+	return err
+}
+
+// TaskStatus represents the numeric status values for Thymer tasks.
+type TaskStatus int
+
+const (
+	TaskStatusUnchecked  TaskStatus = 0 // or null to clear
+	TaskStatusInProgress TaskStatus = 1
+	TaskStatusBlocked    TaskStatus = 2
+	TaskStatusDone       TaskStatus = 8
+)
+
+// UpdateLineItemStatus updates a task's status in the daily note.
+// recordGUID is the journal/daily note GUID, lineItemGUID is the task GUID.
+// Status values: 1=In Progress, 2=Blocked/Waiting, 8=Done, 0 or nil=Unchecked
+func (c *Client) UpdateLineItemStatus(ctx context.Context, recordGUID, lineItemGUID string, status TaskStatus) error {
+	data, _ := json.Marshal(map[string]any{
+		"record_guid":   recordGUID,
+		"lineitem_guid": lineItemGUID,
+		"status":        status,
+	})
+
+	_, err := c.send(ctx, &Message{
+		Type:   "request",
+		Action: "updateLineItem",
 		Data:   data,
 	})
 	return err

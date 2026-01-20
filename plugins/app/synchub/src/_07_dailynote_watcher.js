@@ -343,12 +343,13 @@ const DailyNoteWatcher = {
       const payload = {
         type: 'dailynote.snapshot',
         date: new Date().toISOString().slice(0, 10),
+        journalGuid: journal.guid, // Needed for status updates back to Thymer
         observedAt: new Date().toISOString(),
         lines,
       };
       window.syncHub.send(payload);
       if (manual) {
-        console.log(`[DailyNoteWatcher] Sent ${lines.length} tasks`);
+        console.log(`[DailyNoteWatcher] Sent ${lines.length} tasks (journal: ${journal.guid})`);
       }
     }
 

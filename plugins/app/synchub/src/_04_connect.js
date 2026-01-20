@@ -552,7 +552,7 @@ const SyncHubConnect = {
    * Update a line item (toggle checked, update text, etc.).
    */
   async handleUpdateLineItem(payload, data) {
-    const { record_guid, lineitem_guid, checked, segments } = payload;
+    const { record_guid, lineitem_guid, checked, segments, status } = payload;
     if (!record_guid || !lineitem_guid) throw new Error('record_guid and lineitem_guid required');
 
     const record = await SyncHubHelpers.findRecordByGUID(data, record_guid);
@@ -562,7 +562,14 @@ const SyncHubConnect = {
     const item = lineItems?.find((i) => i.guid === lineitem_guid);
     if (!item) throw new Error(`Line item not found: ${lineitem_guid}`);
 
-    // Update checked state
+    // Update task status via setMetaProperties (numeric done value)
+    // Status values: 1=In Progress, 2=Blocked/Waiting, 8=Done, null=Unchecked
+    if (status !== undefined && item.setMetaProperties) {
+      console.log('[SyncHub] Setting task status:', lineitem_guid, 'to', status);
+      item.setMetaProperties({ done: status });
+    }
+
+    // Legacy: Update checked state (boolean)
     if (checked !== undefined && item.setChecked) {
       item.setChecked(checked);
     }
