@@ -2558,6 +2558,81 @@ body:has(.dashboard) {
 }
 
 /* Done section divider */
+/* Queue Sections */
+.db-q-section {
+    margin-bottom: 16px;
+}
+
+.db-q-section:last-child {
+    margin-bottom: 0;
+}
+
+.db-q-section-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+}
+
+.db-q-section-icon {
+    font-size: 12px;
+    opacity: 0.8;
+}
+
+.db-q-section-title {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    flex: 1;
+}
+
+.db-q-section-count {
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-muted);
+    background: var(--elevated);
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+
+/* Section-specific styles */
+.db-q-section.scheduled .db-q-section-header {
+    border-color: var(--steel);
+}
+
+.db-q-section.floating .db-q-section-header {
+    border-color: var(--sage);
+}
+
+.db-q-section.done .db-q-section-header {
+    border-color: var(--border);
+    opacity: 0.7;
+}
+
+.db-q-section.done .db-q-item {
+    opacity: 0.6;
+}
+
+/* Time badge for scheduled tasks */
+.db-q-time-badge {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--steel);
+    background: var(--steel-soft);
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-left: auto;
+}
+
+/* Scheduled task card style */
+.db-q-item.scheduled {
+    border-left: 3px solid var(--steel);
+}
+
 .db-q-divider {
     display: flex;
     align-items: center;

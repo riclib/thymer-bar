@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -473,6 +474,59 @@ func (s *State) GetTasksOrdered() []*Task {
 	return tasks
 }
 
+// GroupedTasks holds tasks separated by category for queue display.
+type GroupedTasks struct {
+	Scheduled []*Task // Has PlannedSlots, sorted by earliest start time
+	Floating  []*Task // No PlannedSlots, not done, user-ordered
+	Done      []*Task // Status == "done"
+}
+
+// GetTasksGrouped returns tasks grouped by category for queue display.
+// - Scheduled: tasks with planned slots, sorted by earliest start time
+// - Floating: tasks without planned slots that aren't done, in user order
+// - Done: completed tasks
+func (s *State) GetTasksGrouped() GroupedTasks {
+	allTasks := s.GetTasksOrdered()
+
+	var scheduled, floating, done []*Task
+
+	for _, task := range allTasks {
+		if task.Status == "done" {
+			done = append(done, task)
+		} else if len(task.PlannedSlots) > 0 {
+			scheduled = append(scheduled, task)
+		} else {
+			floating = append(floating, task)
+		}
+	}
+
+	// Sort scheduled tasks by earliest start time
+	sort.Slice(scheduled, func(i, j int) bool {
+		return earliestSlotTime(scheduled[i]) < earliestSlotTime(scheduled[j])
+	})
+
+	return GroupedTasks{
+		Scheduled: scheduled,
+		Floating:  floating,
+		Done:      done,
+	}
+}
+
+// earliestSlotTime returns the earliest start time from a task's planned slots.
+// Returns "99:99" if no slots (sorts to end).
+func earliestSlotTime(task *Task) string {
+	if len(task.PlannedSlots) == 0 {
+		return "99:99"
+	}
+	earliest := task.PlannedSlots[0].StartTime
+	for _, slot := range task.PlannedSlots[1:] {
+		if slot.StartTime < earliest {
+			earliest = slot.StartTime
+		}
+	}
+	return earliest
+}
+
 // GetTask returns a task by GUID.
 func (s *State) GetTask(guid string) *Task {
 	s.mu.RLock()
@@ -812,7 +866,18 @@ func (s *State) Apply(event *events.Event) {
 		}
 
 	case events.EventSessionCompleted:
-		if s.CurrentSession != nil {
+		sessionID, _ := event.Data["session_id"].(string)
+
+		// Check for duplicate completion (already in CompletedSessions)
+		isDuplicate := false
+		for _, sess := range s.CompletedSessions {
+			if sess.ID == sessionID {
+				isDuplicate = true
+				break
+			}
+		}
+
+		if !isDuplicate && s.CurrentSession != nil && s.CurrentSession.ID == sessionID {
 			elapsed, _ := event.Data["elapsed_seconds"].(float64)
 			s.CurrentSession.Elapsed = int(elapsed)
 			s.CurrentSession.EndedAt = &event.Timestamp
@@ -975,14 +1040,30 @@ func (s *State) ApplyLineSnapshot(ctx context.Context, snapshot *LineSnapshot) {
 			existingOrder[line.GUID] = true
 		}
 
-		if existing == nil || line.UpdatedAt.After(existing.UpdatedAt) {
+		// Check if content changed (status is most important for Thymer as source of truth)
+		statusChanged := existing != nil && existing.Status != line.Status
+		contentChanged := existing != nil && existing.Markdown != line.Markdown
+		isNewer := existing == nil || line.UpdatedAt.After(existing.UpdatedAt)
+		shouldUpdate := existing == nil || isNewer || statusChanged || contentChanged
+
+		slog.Debug("ApplyLineSnapshot processing",
+			"guid", line.GUID,
+			"status", line.Status,
+			"existingStatus", func() string { if existing != nil { return existing.Status }; return "nil" }(),
+			"lineUpdatedAt", line.UpdatedAt,
+			"existingUpdatedAt", func() time.Time { if existing != nil { return existing.UpdatedAt }; return time.Time{} }(),
+			"isNewer", isNewer,
+			"statusChanged", statusChanged,
+			"shouldUpdate", shouldUpdate)
+
+		if shouldUpdate {
 			// New or updated - publish event to day stream
 			if s.publisher != nil {
 				s.publisher.PublishToDay(ctx, events.EventLineUpdated, map[string]any{
 					"guid":       line.GUID,
 					"markdown":   line.Markdown,
 					"status":     line.Status,
-					"updated_at": line.UpdatedAt.UnixMilli(),
+					"updated_at": time.Now().UnixMilli(), // Use current time for events
 					"order":      i,
 				})
 			}
@@ -993,13 +1074,13 @@ func (s *State) ApplyLineSnapshot(ctx context.Context, snapshot *LineSnapshot) {
 					GUID:      line.GUID,
 					Markdown:  line.Markdown,
 					Status:    line.Status,
-					UpdatedAt: line.UpdatedAt,
+					UpdatedAt: time.Now(), // Use current time
 				}
 				s.TodayStats.TasksFound++
 			} else {
 				existing.Markdown = line.Markdown
 				existing.Status = line.Status
-				existing.UpdatedAt = line.UpdatedAt
+				existing.UpdatedAt = time.Now() // Use current time when updating
 			}
 		}
 	}

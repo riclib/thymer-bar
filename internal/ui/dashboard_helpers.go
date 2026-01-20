@@ -49,6 +49,32 @@ func formatHour(hour int) string {
 	return fmt.Sprintf("%dp", hour-12)
 }
 
+// formatSlotTime converts "14:00" to "2:00pm" for display
+func formatSlotTime(timeStr string) string {
+	var hour, minute int
+	_, err := fmt.Sscanf(timeStr, "%d:%d", &hour, &minute)
+	if err != nil {
+		return timeStr
+	}
+
+	suffix := "am"
+	displayHour := hour
+	if hour >= 12 {
+		suffix = "pm"
+		if hour > 12 {
+			displayHour = hour - 12
+		}
+	}
+	if hour == 0 {
+		displayHour = 12
+	}
+
+	if minute == 0 {
+		return fmt.Sprintf("%d%s", displayHour, suffix)
+	}
+	return fmt.Sprintf("%d:%02d%s", displayHour, minute, suffix)
+}
+
 func formatElapsed(seconds int) string {
 	h := seconds / 3600
 	m := (seconds % 3600) / 60

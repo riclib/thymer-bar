@@ -6,7 +6,7 @@ import (
 
 // DashboardData contains all data for the dashboard view
 type DashboardData struct {
-	Tasks     []Task
+	Tasks     GroupedTasks       // Tasks grouped by category
 	Events    []Event
 	Habits    []Habit
 	Stats     Stats
@@ -14,6 +14,27 @@ type DashboardData struct {
 	Sessions  []CompletedSession // Completed sessions for timeline
 	Connected bool
 	Date      string // "Thu, Jan 16"
+}
+
+// GroupedTasks holds tasks separated by category for queue display
+type GroupedTasks struct {
+	Scheduled []Task // Has PlannedSlots, sorted by earliest start time
+	Floating  []Task // No PlannedSlots, not done, user-ordered
+	Done      []Task // Status == "done"
+}
+
+// All returns all tasks combined (for timeline rendering)
+func (g GroupedTasks) All() []Task {
+	all := make([]Task, 0, len(g.Scheduled)+len(g.Floating)+len(g.Done))
+	all = append(all, g.Scheduled...)
+	all = append(all, g.Floating...)
+	all = append(all, g.Done...)
+	return all
+}
+
+// PendingCount returns the count of non-done tasks
+func (g GroupedTasks) PendingCount() int {
+	return len(g.Scheduled) + len(g.Floating)
 }
 
 // CompletedSession represents a completed work session for the timeline
@@ -93,7 +114,7 @@ templ Dashboard(data DashboardData) {
 			</div>
 			<div class="db-timeline-wrap">
 				<div class="db-timeline-body">
-					@Timeline(data.Tasks, data.Events, data.Sessions, data.Session)
+					@Timeline(data.Tasks.All(), data.Events, data.Sessions, data.Session)
 				</div>
 			</div>
 		</div>
@@ -111,7 +132,7 @@ templ Dashboard(data DashboardData) {
 		<div class="db-panel">
 			<div class="db-panel-head">
 				<span class="db-panel-label">Up Next</span>
-				<span class="db-panel-meta">{ fmt.Sprintf("%d tasks", countPending(data.Tasks)) }</span>
+				<span class="db-panel-meta">{ fmt.Sprintf("%d tasks", data.Tasks.PendingCount()) }</span>
 			</div>
 			<div class="db-queue-body">
 				@TaskQueue(data.Tasks, data.Session)
@@ -327,9 +348,9 @@ templ FocusIdle() {
 	</div>
 }
 
-// TaskQueue renders the task queue with inline session controls
-templ TaskQueue(tasks []Task, session *Session) {
-	if len(tasks) == 0 {
+// TaskQueue renders the task queue with three sections: scheduled, floating, done
+templ TaskQueue(tasks GroupedTasks, session *Session) {
+	if len(tasks.Scheduled) == 0 && len(tasks.Floating) == 0 && len(tasks.Done) == 0 {
 		<div class="db-queue-empty">
 			<div class="db-queue-empty-icon">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -341,22 +362,44 @@ templ TaskQueue(tasks []Task, session *Session) {
 			<p class="db-queue-empty-hint">Add tasks to your daily note in Thymer</p>
 		</div>
 	} else {
-		// Show pending/in_progress first
-		for _, task := range tasks {
-			if task.Status != "done" {
-				@TaskCard(task, session)
-			}
-		}
-		// Show completed at the end with divider
-		if hasDoneTasks(tasks) {
-			<div class="db-q-divider">
-				<span class="db-q-divider-text">Done</span>
+		// Scheduled section - tasks with planned time slots
+		if len(tasks.Scheduled) > 0 {
+			<div class="db-q-section scheduled">
+				<div class="db-q-section-header">
+					<span class="db-q-section-icon">⏰</span>
+					<span class="db-q-section-title">Scheduled</span>
+					<span class="db-q-section-count">{ fmt.Sprintf("%d", len(tasks.Scheduled)) }</span>
+				</div>
+				for _, task := range tasks.Scheduled {
+					@TaskCardScheduled(task, session)
+				}
 			</div>
 		}
-		for _, task := range tasks {
-			if task.Status == "done" {
-				@TaskCardDone(task)
-			}
+		// Floating section - unscheduled tasks, user can reorder
+		if len(tasks.Floating) > 0 {
+			<div class="db-q-section floating" data-section="floating">
+				<div class="db-q-section-header">
+					<span class="db-q-section-icon">📋</span>
+					<span class="db-q-section-title">Up Next</span>
+					<span class="db-q-section-count">{ fmt.Sprintf("%d", len(tasks.Floating)) }</span>
+				</div>
+				for _, task := range tasks.Floating {
+					@TaskCard(task, session)
+				}
+			</div>
+		}
+		// Done section - completed tasks
+		if len(tasks.Done) > 0 {
+			<div class="db-q-section done">
+				<div class="db-q-section-header">
+					<span class="db-q-section-icon">✓</span>
+					<span class="db-q-section-title">Done</span>
+					<span class="db-q-section-count">{ fmt.Sprintf("%d", len(tasks.Done)) }</span>
+				</div>
+				for _, task := range tasks.Done {
+					@TaskCardDone(task)
+				}
+			</div>
 		}
 	}
 }
@@ -401,6 +444,48 @@ templ TaskCard(task Task, session *Session) {
 				<span class="db-q-estimate">~{ task.Estimate }</span>
 			} else {
 				<span class="db-q-elapsed-empty"></span>
+			}
+		</div>
+	</div>
+}
+
+// TaskCardScheduled renders a scheduled task card with time badge (not draggable for reorder)
+templ TaskCardScheduled(task Task, session *Session) {
+	<div
+		class={ "db-q-item", "scheduled", templ.KV("active", session != nil && session.TaskGUID == task.GUID && session.Active), templ.KV("paused", session != nil && session.TaskGUID == task.GUID && session.Paused) }
+		data-guid={ task.GUID }
+	>
+		<div class="db-q-title">@templ.Raw(renderMarkdownTitle(task.Title))</div>
+		<div class="db-q-footer">
+			<span class="db-q-source">{ task.Source }</span>
+			// Show time badge for first planned slot
+			if len(task.PlannedSlots) > 0 {
+				<span class="db-q-time-badge">{ formatSlotTime(task.PlannedSlots[0].StartTime) }</span>
+			}
+			<div class="db-q-controls">
+				if session != nil && session.TaskGUID == task.GUID && session.Active {
+					<button class="db-q-btn" data-action="pause-session" data-guid={ task.GUID } title="Pause">
+						<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+							<rect x="6" y="4" width="4" height="16" rx="1"/>
+							<rect x="14" y="4" width="4" height="16" rx="1"/>
+						</svg>
+					</button>
+				} else if session != nil && session.TaskGUID == task.GUID && session.Paused {
+					<button class="db-q-btn" data-action="resume-session" data-guid={ task.GUID } title="Resume">
+						<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+							<path d="M8 5v14l11-7z"/>
+						</svg>
+					</button>
+				} else {
+					<button class="db-q-btn" data-action="start-task" data-guid={ task.GUID } title="Start">
+						<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+							<path d="M8 5v14l11-7z"/>
+						</svg>
+					</button>
+				}
+			</div>
+			if task.ElapsedToday > 0 {
+				<span class="db-q-elapsed">{ formatDuration(task.ElapsedToday) }</span>
 			}
 		</div>
 	</div>

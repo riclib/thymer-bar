@@ -489,14 +489,18 @@ function showToast(message, type = 'info') {
 // ============================================================================
 
 function setupDragAndDrop() {
-    // Queue items are draggable
-    document.querySelectorAll('.db-q-item').forEach(item => {
-        item.setAttribute('draggable', 'true');
-        item.addEventListener('dragstart', handleDragStart);
-        item.addEventListener('dragend', handleDragEnd);
-    });
+    // Only floating queue items are draggable (not scheduled or done)
+    // Floating section has data-section="floating"
+    const floatingSection = document.querySelector('.db-q-section[data-section="floating"]');
+    if (floatingSection) {
+        floatingSection.querySelectorAll('.db-q-item').forEach(item => {
+            item.setAttribute('draggable', 'true');
+            item.addEventListener('dragstart', handleDragStart);
+            item.addEventListener('dragend', handleDragEnd);
+        });
+    }
 
-    // Planned blocks in timeline are also draggable
+    // Planned blocks in timeline are draggable (to move/reschedule)
     document.querySelectorAll('.db-block.task.planned').forEach(block => {
         block.addEventListener('dragstart', handleDragStart);
         block.addEventListener('dragend', handleDragEnd);
@@ -1275,7 +1279,11 @@ async function handleResumeSession() {
     }
 }
 
+let completingSession = false; // Guard against double-clicks
+
 async function handleCompleteSession() {
+    if (completingSession) return; // Prevent double-click
+    completingSession = true;
     try {
         await CompleteSession(sessionState.taskGuid, sessionState.elapsed);
         sessionState = { active: false, taskGuid: null, taskTitle: '', elapsed: 0 };
@@ -1284,6 +1292,8 @@ async function handleCompleteSession() {
         showToast('Task completed!', 'success');
     } catch (err) {
         showToast(`Failed to complete: ${err}`, 'error');
+    } finally {
+        completingSession = false;
     }
 }
 

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -260,7 +261,7 @@ func (a *App) GetDashboardHTML() (string, error) {
 		Date:      time.Now().Format("Monday, January 2"),
 	}
 
-	// Convert tasks
+	// Convert tasks and group by category
 	for _, t := range data.Tasks {
 		// Convert planned slots
 		var uiSlots []ui.PlannedSlot
@@ -271,7 +272,7 @@ func (a *App) GetDashboardHTML() (string, error) {
 			})
 		}
 
-		uiData.Tasks = append(uiData.Tasks, ui.Task{
+		uiTask := ui.Task{
 			GUID:         t.GUID,
 			Title:        t.Title,
 			Source:       t.Source,
@@ -282,8 +283,30 @@ func (a *App) GetDashboardHTML() (string, error) {
 			SessionCount: t.SessionCount,
 			PlannedSlots: uiSlots,
 			Color:        t.Color,
-		})
+		}
+
+		// Group by category: done, scheduled, or floating
+		if t.Status == "done" {
+			uiData.Tasks.Done = append(uiData.Tasks.Done, uiTask)
+		} else if len(uiSlots) > 0 {
+			uiData.Tasks.Scheduled = append(uiData.Tasks.Scheduled, uiTask)
+		} else {
+			uiData.Tasks.Floating = append(uiData.Tasks.Floating, uiTask)
+		}
 	}
+
+	// Sort scheduled tasks by earliest start time
+	sort.Slice(uiData.Tasks.Scheduled, func(i, j int) bool {
+		iTime := ""
+		jTime := ""
+		if len(uiData.Tasks.Scheduled[i].PlannedSlots) > 0 {
+			iTime = uiData.Tasks.Scheduled[i].PlannedSlots[0].StartTime
+		}
+		if len(uiData.Tasks.Scheduled[j].PlannedSlots) > 0 {
+			jTime = uiData.Tasks.Scheduled[j].PlannedSlots[0].StartTime
+		}
+		return iTime < jTime
+	})
 
 	// Convert events
 	for _, e := range data.Events {
@@ -679,6 +702,10 @@ func (a *App) getTodayTasks() ([]DashboardTask, error) {
 			} else if currentSession != nil && currentSession.TaskGUID == task.GUID {
 				status = "in_progress"
 			}
+			slog.Debug("getTodayTasks",
+				"guid", task.GUID,
+				"projStatus", task.Status,
+				"mappedStatus", status)
 
 			// Convert planned slots
 			var plannedSlots []PlannedSlotData
